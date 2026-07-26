@@ -5,7 +5,7 @@
 - Accounts Worker名: `mochios-accounts`
 - DeveloperCA Worker名: `mochios-developer-ca`
 - Console Worker名: `mochios-console`
-- Custom Domain: `console.mochios.org`
+- Worker Route: `console.mochios.org/*`（既存のproxied DNS recordを使用）
 
 ## Secret
 

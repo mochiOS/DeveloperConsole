@@ -17,12 +17,16 @@
     "run_worker_first": ["/health", "/v1/*"]
   },
   "routes": [
-    { "pattern": "console.mochios.org", "custom_domain": true }
+    {
+      "pattern": "console.mochios.org/*",
+      "zone_name": "mochios.org"
+    }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "mochios-console",
+      "database_id": "646e2e76-7486-4822-b1a5-421fa566d5e5",
       "migrations_dir": "migrations"
     }
   ],
