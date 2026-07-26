@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "mochios-console",
+  "main": "build/worker/shim.mjs",
+  "compatibility_date": "2026-07-26",
+  "build": {
+    "command": "worker-build --release --no-panic-recovery"
+  },
+  "vars": {
+    "ACCOUNTS_PUBLIC_URL": "https://accounts.mochios.org",
+    "CONSOLE_BASE_URL": "https://console.mochios.org",
+    "SESSION_TTL_SECONDS": "2592000"
+  },
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/health", "/v1/*"]
+  },
+  "routes": [
+    { "pattern": "console.mochios.org", "custom_domain": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mochios-console",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "services": [
+    { "binding": "ACCOUNTS", "service": "mochios-accounts" },
+    { "binding": "DEVELOPER_CA", "service": "mochios-developer-ca" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 }
+  }
+}
