@@ -4,15 +4,16 @@
 実装したBFF、Cloudflare Workers Static Assets、D1セッションで構成します。
 
 ConsoleはDeveloper、Developer Member、追加Developer申請、Developer
-Certificate申請を操作します。証明書申請時は`.mpkg`を端末内で展開し、
+Certificate発行を操作します。証明書発行時は`.mpkg`を端末内で展開し、
 `manifest.toml`の`package.id`と全`binary.requires`からscopeとCapabilityを
-自動入力できます。パッケージ本体はConsoleへ送信しません。
+自動入力します。パッケージ本体はConsoleへ送信せず、DeveloperCAが同じリクエスト内で
+Certificateを即時発行します。
 
-allowlistへ登録された審査担当者は、Developer確認、追加作成申請、証明書発行申請、
+allowlistへ登録された担当者は、Developer確認、追加作成申請、Certificate失効、
 検証済みApp Store Releaseをブラウザーから審査できます。DeveloperCAの秘密鍵、
 管理token、Accountsのセッショントークンをブラウザーへ渡しません。
-証明書審査では、manifest由来scopeとCapabilityに対するDeveloper grantとglobal許可を
-個別に確認・追加し、すべて揃うまで発行ボタンを無効にします。
+Certificateの発行審査・承認・却下操作はありません。管理者がCertificateに対して行う
+操作は、固定reason codeと説明を伴う失効だけです。
 
 ## 構成
 

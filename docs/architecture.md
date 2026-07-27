@@ -19,7 +19,7 @@ Account IDを固定し、DeveloperCAは署名とAccount active状態を再確認
 
 通常利用者へDeveloperCA管理APIを転送しません。`developer_ca_reviewers`へ登録された
 Accountだけが、固定された審査BFF APIを通してDeveloper確認、追加Developer作成申請、
-Certificate発行申請と発行Policyを操作できます。Console Workerは60秒の署名済みadmin
+Certificate失効を操作できます。Console Workerは60秒の署名済みadmin
 tokenを操作ごとに生成します。DeveloperCAのactorは署名済み`sub`だけから取得され、`jti`
 はreplay防止と監査へ使用されます。
 任意の管理パスを指定できるproxyは公開しません。
@@ -31,9 +31,10 @@ tokenを操作ごとに生成します。DeveloperCAのactorは署名済み`sub`
 `[[binary]].requires`の和集合を許可Capabilityへ入力します。圧縮済み128 MiB、展開後
 512 MiB、10,000 entry、manifest 1 MiBの上限を設けます。
 
-これは入力補助であり信頼判定ではありません。DeveloperCAは発行時にactive member、
-Developer Package scope grant、Developer Capability grant、global issuable Capabilityを
-再検証します。審査画面では不足Policyを明示的に許可するまで発行できません。
+Package IDとCapability欄は読み取り専用で、MPKG選択を必須にします。DeveloperCAは
+Developerのactive/verified状態、active member role、Root署名済みtrust snapshot、
+Issuer Registry、Certificate形式を検証し、管理者審査なしで即時発行します。
+CertificateのCapabilityは管理者承認を意味せず、OS実行時認可とApp Store審査は別です。
 
 ## App Store審査
 

@@ -23,8 +23,8 @@ Secret値をコマンド引数、ログ、Git管理ファイルへ書かない�
 
 ## マイグレーション
 
-AccountsへConsole認可コード用migrationを、Consoleへsession・DeveloperCA reviewer・
-App Store reviewer用migrationを適用します。
+AccountsへConsole認可コード用migrationを、Consoleへsession・DeveloperCA管理担当・
+App Store reviewer用migrationを適用します。DeveloperCAには自動発行migrationも適用します。
 
 ```powershell
 cd ../Account
@@ -32,9 +32,13 @@ npx wrangler d1 migrations apply mochios-accounts-staging --remote
 
 cd ../Console
 npx wrangler d1 migrations apply mochios-console --remote
+
+cd ../DeveloperCA
+npx wrangler d1 migrations apply mochios-developer-ca --remote
 ```
 
-審査担当Accountは必要最小限だけallowlistへ登録します。
+管理・審査担当Accountは必要最小限だけallowlistへ登録します。DeveloperCA担当者は
+Developer確認、追加作成申請、Certificate失効を行いますが、Certificate発行審査はしません。
 
 ```powershell
 npx wrangler d1 execute mochios-console --remote --command "INSERT INTO app_store_reviewers(account_id, created_at, created_by) VALUES('<Account UUID>', unixepoch(), '<登録者Account UUID>')"
