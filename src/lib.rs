@@ -532,7 +532,10 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         )
         .get_async("/v1/developer-creation-requests", proxy_route)
         .post_async("/v1/developer-creation-requests", proxy_route)
-        .post_async("/v1/developers/:developer_id/certificates", proxy_route)
+        .post_async(
+            "/v1/developers/:developer_id/certificates/issue",
+            proxy_route,
+        )
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/certificates/:certificate_id", proxy_route)
         .get_async("/v1/developer-reviews", developer_review_queue)
@@ -593,7 +596,7 @@ mod tests {
         let source = include_str!("lib.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         let app = include_str!("../public/assets/app.js");
-        assert!(production.contains("/v1/developers/:developer_id/certificates"));
+        assert!(production.contains("/v1/developers/:developer_id/certificates/issue"));
         assert!(production.contains("(\"certificates\", \"revoke\")"));
         assert!(production.contains("/v1/admin/certificates/{resource_id}/revoke"));
         assert!(!production.contains("/v1/admin/certificate-requests"));

@@ -513,7 +513,7 @@ document.addEventListener("submit", async (event) => {
       const values = formValues(form);
       const developerId = form.dataset.developerId;
       const payload = { signature_algorithm: "ed25519", subject_public_key: values.subject_public_key.trim(), package_id_scopes: commaList(values.package_id_scopes), allowed_capabilities: commaList(values.allowed_capabilities) };
-      await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/issue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       showToast("Certificateを発行しました");
       await renderDeveloperDetail(developerId);
     });
