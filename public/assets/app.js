@@ -2,6 +2,7 @@ const app = document.querySelector("#app");
 const toastRegion = document.querySelector("#toast-region");
 
 let account = null;
+let appStoreReviewer = false;
 let developers = [];
 let creationRequests = [];
 let detailRequestId = 0;
@@ -25,6 +26,28 @@ function formatDate(seconds) {
   if (!Number.isFinite(Number(seconds))) return "—";
   return new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeZone: "Asia/Tokyo" })
     .format(new Date(Number(seconds) * 1000));
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let size = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && size >= 1024; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size.toFixed(size >= 10 ? 1 : 2)} ${unit}`;
+}
+
+function githubDownloadUrl(value) {
+  try {
+    const url = new URL(String(value));
+    if (url.protocol === "https:" && url.hostname === "github.com" && !url.username && !url.password && !url.hash && url.pathname.includes("/releases/download/")) return url.href;
+  } catch {}
+  return null;
 }
 
 async function api(path, options = {}) {
@@ -85,6 +108,7 @@ function activeRoute() {
   const hash = window.location.hash || "#overview";
   if (hash.startsWith("#developers")) return "developers";
   if (hash === "#requests") return "requests";
+  if (hash.startsWith("#reviews")) return "reviews";
   return "overview";
 }
 
@@ -94,6 +118,7 @@ function sidebar() {
     <a href="#overview" ${active === "overview" ? 'aria-current="page"' : ""}>${icon("dashboard")}概要</a>
     <a href="#developers" ${active === "developers" ? 'aria-current="page"' : ""}>${icon("badge")}Developers</a>
     <a href="#requests" ${active === "requests" ? 'aria-current="page"' : ""}>${icon("description")}追加申請</a>
+    ${appStoreReviewer ? `<a href="#reviews" ${active === "reviews" ? 'aria-current="page"' : ""}>${icon("fact_check")}App審査</a>` : ""}
   </nav><div class="sidebar__account"><p class="sidebar__label">ACCOUNT</p><nav>
     <a href="https://accounts.mochios.org/#account" target="_blank" rel="noopener noreferrer">${icon("settings")}Account設定</a>
   </nav></div></aside>`;
@@ -110,12 +135,13 @@ function heading(kicker, title, description, action = "") {
 function statusBadge(value, kind = "status") {
   const labels = {
     active: "有効", suspended: "停止中", deleted: "削除済み",
-    pending: "審査中", verified: "確認済み", rejected: "却下", approved: "承認済み", consumed: "使用済み",
+    pending: "検証待ち", submitted: "審査待ち", valid: "検証済み", invalid: "検証失敗", verified: "確認済み", rejected: "却下", approved: "承認済み", consumed: "使用済み",
+    draft: "下書き", published: "公開中",
     individual: "個人", organization: "組織", owner: "Owner", admin: "Admin", developer: "Developer", viewer: "Viewer",
     invited: "招待中", removed: "削除済み", issued: "発行済み", revoked: "失効済み",
   };
-  const style = ["active", "verified", "approved", "issued"].includes(value)
-    ? "success" : ["pending", "invited"].includes(value) ? "warning" : ["suspended", "deleted", "rejected", "revoked", "removed"].includes(value) ? "danger" : "neutral";
+  const style = ["active", "valid", "verified", "approved", "issued", "published"].includes(value)
+    ? "success" : ["pending", "submitted", "invited", "draft"].includes(value) ? "warning" : ["invalid", "suspended", "deleted", "rejected", "revoked", "removed"].includes(value) ? "danger" : "neutral";
   return `<span class="badge badge--${style}" data-kind="${escapeHtml(kind)}">${escapeHtml(labels[value] || value)}</span>`;
 }
 
@@ -228,6 +254,69 @@ async function renderDeveloperDetail(developerId) {
   }
 }
 
+function reviewSkeleton(title = "審査を読み込み中") {
+  app.innerHTML = shell(`${heading("APP STORE", title, "検証済みReleaseの審査情報を取得しています。")}
+    <div class="card empty"><span class="spinner"></span></div>`);
+}
+
+async function renderReviews() {
+  if (!appStoreReviewer) return renderOverview();
+  reviewSkeleton();
+  try {
+    const result = await api("/v1/app-store/reviews");
+    const releases = result.releases || [];
+    document.title = "App審査 | mochiOS Console";
+    app.innerHTML = shell(`${heading("APP STORE", "App審査", "Rust審査ツールによる形式・hash・署名検証を通過したReleaseだけを表示します。")}
+      <section class="metrics" aria-label="App審査概要">
+        <article class="metric"><span>審査待ち</span><strong>${releases.length}</strong></article>
+        <article class="metric"><span>表示条件</span><strong class="metric__text">検証済み</strong></article>
+        <article class="metric"><span>配布元</span><strong class="metric__text">GitHub Releases</strong></article>
+      </section>
+      <section class="card"><div class="card__header"><div><h2>提出済みRelease</h2><p>アプリ情報と検証値を確認して承認または却下します。</p></div></div>
+        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${formatDate(release.submitted_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>審査待ちのReleaseはありません</h3><p>MPKG reviewerで検証を通過したReleaseがここに表示されます。</p></div>`}
+      </section>`);
+  } catch (error) {
+    app.innerHTML = shell(`${heading("APP STORE", "審査一覧を取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-reviews">再試行</button></p></div>`);
+  }
+}
+
+async function renderReviewDetail(releaseId) {
+  if (!appStoreReviewer) return renderOverview();
+  reviewSkeleton("Releaseを読み込み中");
+  try {
+    const result = await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}`);
+    const release = result.release;
+    const downloadUrl = githubDownloadUrl(release.download_url);
+    const actionable = release.validation_status === "valid" && release.review_status === "submitted" && release.publish_status === "draft";
+    document.title = `${release.bundle_id} ${release.version} | App審査`;
+    app.innerHTML = shell(`${heading("APP STORE REVIEW", release.display_name || release.bundle_id, `${release.bundle_id} · ${release.version}`, `<a class="button button--secondary" href="#reviews">審査一覧へ戻る</a>`)}
+      <section class="review-summary">
+        <div class="badges">${statusBadge(release.validation_status)}${statusBadge(release.review_status)}${statusBadge(release.publish_status)}</div>
+        ${downloadUrl ? `<a class="button button--secondary" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener noreferrer">${icon("open_in_new")}GitHubから取得</a>` : ""}
+      </section>
+      <section class="card"><div class="card__header"><div><h2>Release情報</h2><p>登録時に固定されたGitHub assetとパッケージmetadataです。</p></div></div>
+        <div class="card__body"><dl class="detail-list">
+          <div><dt>Package ID</dt><dd><code>${escapeHtml(release.bundle_id)}</code></dd></div>
+          <div><dt>Version</dt><dd>${escapeHtml(release.version)}</dd></div>
+          <div><dt>Repository</dt><dd>${escapeHtml(release.github_repository)}</dd></div>
+          <div><dt>Release tag</dt><dd><code>${escapeHtml(release.github_release_tag)}</code></dd></div>
+          <div><dt>Asset</dt><dd>${escapeHtml(release.asset_name)} · ${formatBytes(release.file_size)}</dd></div>
+          <div><dt>最低mochiOS</dt><dd>${escapeHtml(release.minimum_mochios_version)}</dd></div>
+          <div><dt>Certificate</dt><dd><code>${escapeHtml(release.developer_certificate_id)}</code></dd></div>
+          <div><dt>Package SHA-256</dt><dd><code class="hash-value">${escapeHtml(release.sha256)}</code></dd></div>
+          <div><dt>Manifest SHA-256</dt><dd><code class="hash-value">${escapeHtml(release.manifest_hash)}</code></dd></div>
+          <div><dt>変更内容</dt><dd class="pre-wrap">${escapeHtml(release.changelog || "—")}</dd></div>
+        </dl></div>
+      </section>
+      ${actionable ? `<section class="section grid review-actions">
+        <form class="card" id="review-approve-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>承認して公開</h3><p>承認するとストアへ即時公開されます。</p></div></div><div class="card__body form"><label class="confirm-field"><input type="checkbox" name="confirmed" required><span>検証値とアプリ内容を確認しました</span></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">承認して公開</button></div></form>
+        <form class="card" id="review-reject-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>却下</h3><p>開発者が判断できる具体的な理由を記載します。</p></div></div><div class="card__body form"><label class="field"><span>却下理由</span><textarea class="textarea" name="message" minlength="1" maxlength="2000" required></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--danger" type="submit">Releaseを却下</button></div></form>
+      </section>` : `<section class="section card empty">${icon("fact_check")}<h3>このReleaseは操作できません</h3><p>検証済み・審査待ち・下書きのReleaseだけを承認または却下できます。</p></section>`}`);
+  } catch (error) {
+    app.innerHTML = shell(`${heading("APP STORE", "Releaseを取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><a class="button button--secondary" href="#reviews">審査一覧へ戻る</a></p></div>`);
+  }
+}
+
 async function renderRoute() {
   if (!account) return renderLogin();
   const hash = window.location.hash || "#overview";
@@ -235,9 +324,14 @@ async function renderRoute() {
     const id = decodeURIComponent(hash.slice("#developers/".length));
     if (id) return renderDeveloperDetail(id);
   }
+  if (hash.startsWith("#reviews/")) {
+    const id = decodeURIComponent(hash.slice("#reviews/".length));
+    if (id) return renderReviewDetail(id);
+  }
   detailRequestId += 1;
   if (hash === "#developers") return renderDevelopers();
   if (hash === "#requests") return renderRequests();
+  if (hash === "#reviews") return renderReviews();
   renderOverview();
 }
 
@@ -285,11 +379,13 @@ document.addEventListener("click", async (event) => {
     card.hidden = !card.hidden;
     if (!card.hidden) card.querySelector("input")?.focus();
   }
+  if (button.dataset.action === "reload-reviews") await renderReviews();
   if (button.dataset.action === "logout") {
     button.disabled = true;
     try {
       await api("/v1/session/logout", { method: "POST" });
       account = null;
+      appStoreReviewer = false;
       developers = [];
       creationRequests = [];
       window.location.hash = "";
@@ -343,6 +439,23 @@ document.addEventListener("submit", async (event) => {
       await renderDeveloperDetail(developerId);
     });
   }
+  if (form.id === "review-approve-form") {
+    await submitForm(form, async () => {
+      const releaseId = form.dataset.releaseId;
+      await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}/approve`, { method: "POST" });
+      showToast("Releaseを公開しました");
+      window.location.hash = "#reviews";
+    });
+  }
+  if (form.id === "review-reject-form") {
+    await submitForm(form, async () => {
+      const releaseId = form.dataset.releaseId;
+      const values = formValues(form);
+      await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: values.message.trim() }) });
+      showToast("Releaseを却下しました");
+      window.location.hash = "#reviews";
+    });
+  }
 });
 
 window.addEventListener("hashchange", () => void renderRoute());
@@ -351,6 +464,7 @@ async function initialize() {
   try {
     const result = await api("/v1/session/me");
     account = result.account;
+    appStoreReviewer = result.app_store_reviewer === true;
     await refreshWorkspace();
   } catch (error) {
     if (error.status !== 401) showToast("Consoleを読み込めませんでした", error.message, "error");

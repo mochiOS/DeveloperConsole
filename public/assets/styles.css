@@ -80,6 +80,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .metric { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: rgba(255,255,255,.78); }
 .metric span { color: var(--secondary); font-size: 12px; }
 .metric strong { display: block; margin-top: 9px; font-size: 28px; letter-spacing: -.04em; }
+.metric .metric__text { font-size: 17px; line-height: 1.4; letter-spacing: -.02em; }
 .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 15px; }
 .card { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: 0 3px 12px rgba(19,27,38,.025); overflow: hidden; }
 .card__header { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid var(--border); }
@@ -133,6 +134,13 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
 .table th { color: var(--secondary); font-weight: 620; }
 .table tr:last-child td { border-bottom: 0; }
 .inline-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.review-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -8px 0 18px; }
+.review-summary .badges { margin: 0; }
+.hash-value { display: block; overflow-wrap: anywhere; }
+.pre-wrap { white-space: pre-wrap; line-height: 1.65; }
+.review-actions { align-items: start; }
+.confirm-field { display: flex; align-items: start; gap: 10px; color: var(--secondary); font-size: 12px; line-height: 1.55; }
+.confirm-field input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--accent); }
 
 .footer { width: min(calc(100% - 40px), var(--content)); margin: auto; padding: 23px 0 32px; border-top: 1px solid var(--border); color: var(--tertiary); font-size: 11px; }
 .toast-region { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: grid; gap: 10px; width: min(calc(100% - 40px),380px); }
@@ -151,7 +159,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
   .workspace { grid-template-columns: 1fr; gap: 24px; }
   .sidebar { position: static; }
   .sidebar__label, .sidebar__account { display: none; }
-  .sidebar nav { grid-template-columns: repeat(3,1fr); }
+  .sidebar nav { grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); }
   .sidebar a { justify-content: center; }
 }
 @media (max-width: 650px) {
