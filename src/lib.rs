@@ -13,6 +13,7 @@ use serde_json::json;
 use worker::*;
 
 const MAX_JSON_BODY_BYTES: usize = 64 * 1024;
+const STATUS_ORIGIN: &str = "https://status.mochios.org";
 
 fn now() -> i64 {
     (Date::now().as_millis() / 1000) as i64
@@ -22,6 +23,27 @@ fn json_response<T: Serialize>(value: &T, status: u16) -> Result<Response> {
     let mut response = Response::from_json(value)?.with_status(status);
     response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(response)
+}
+
+fn with_health_cors(mut response: Response) -> Result<Response> {
+    let headers = response.headers_mut();
+    headers.set("Access-Control-Allow-Origin", STATUS_ORIGIN)?;
+    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+    headers.set("Access-Control-Allow-Headers", "Content-Type")?;
+    headers.set("Access-Control-Max-Age", "3600")?;
+    headers.set("Cache-Control", "no-store")?;
+    headers.set("Vary", "Origin")?;
+    Ok(response)
+}
+
+fn health_response() -> Result<Response> {
+    with_health_cors(Response::from_json(
+        &json!({"status":"ok","service":"console"}),
+    )?)
+}
+
+fn health_preflight() -> Result<Response> {
+    with_health_cors(Response::empty()?.with_status(204))
 }
 
 fn error(code: &str, message: &str, status: u16) -> Result<Response> {
@@ -173,9 +195,8 @@ async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response
 
 async fn route(req: Request, env: Env) -> Result<Response> {
     Router::new()
-        .get_async("/health", |_, _| async {
-            json_response(&json!({"status":"ok","service":"console"}), 200)
-        })
+        .get_async("/health", |_, _| async { health_response() })
+        .options_async("/health", |_, _| async { health_preflight() })
         .get_async("/v1/auth/start", auth_start)
         .get_async("/v1/auth/callback", auth_callback)
         .post_async("/v1/session/logout", logout)
