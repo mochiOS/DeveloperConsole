@@ -105,6 +105,15 @@ pub async fn is_app_store_reviewer(db: &D1Database, account_id: &str) -> Result<
         .is_some())
 }
 
+pub async fn is_developer_ca_reviewer(db: &D1Database, account_id: &str) -> Result<bool> {
+    Ok(db
+        .prepare("SELECT account_id FROM developer_ca_reviewers WHERE account_id = ?1 LIMIT 1")
+        .bind(&[value(account_id)])?
+        .first::<String>(Some("account_id"))
+        .await?
+        .is_some())
+}
+
 pub async fn record_review_action(
     db: &D1Database,
     account_id: &str,
@@ -134,5 +143,9 @@ mod tests {
 
         let reviewer_schema = include_str!("../migrations/0002_app_store_reviewers.sql");
         assert!(reviewer_schema.contains("account_id TEXT PRIMARY KEY"));
+
+        let developer_reviewer_schema =
+            include_str!("../migrations/0003_developer_ca_reviewers.sql");
+        assert!(developer_reviewer_schema.contains("account_id TEXT PRIMARY KEY"));
     }
 }

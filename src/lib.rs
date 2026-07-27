@@ -140,9 +140,15 @@ async fn auth_callback(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     match current_account(&req, &ctx.env).await? {
         Some(account) => {
-            let reviewer = store::is_app_store_reviewer(&ctx.env.d1("DB")?, &account.id).await?;
+            let db = ctx.env.d1("DB")?;
+            let app_store_reviewer = store::is_app_store_reviewer(&db, &account.id).await?;
+            let developer_ca_reviewer = store::is_developer_ca_reviewer(&db, &account.id).await?;
             json_response(
-                &json!({"account": account, "app_store_reviewer": reviewer}),
+                &json!({
+                    "account": account,
+                    "app_store_reviewer": app_store_reviewer,
+                    "developer_ca_reviewer": developer_ca_reviewer,
+                }),
                 200,
             )
         }
@@ -238,6 +244,132 @@ async fn review_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         None,
     )
     .await
+}
+
+async fn developer_reviewer_account(
+    req: &Request,
+    env: &Env,
+) -> Result<std::result::Result<Account, Response>> {
+    let Some(account) = current_account(req, env).await? else {
+        return Ok(Err(error("UNAUTHENTICATED", "ログインが必要です。", 401)?));
+    };
+    if !store::is_developer_ca_reviewer(&env.d1("DB")?, &account.id).await? {
+        return Ok(Err(error(
+            "REVIEWER_REQUIRED",
+            "Developer審査担当者だけが利用できます。",
+            403,
+        )?));
+    }
+    Ok(Ok(account))
+}
+
+fn valid_review_resource_id(value: &str) -> bool {
+    value.len() == 36
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+}
+
+async fn developer_review_queue(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match developer_reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    upstream::developer_ca_admin(
+        &ctx.env,
+        &account.id,
+        Method::Get,
+        "/v1/admin/review-queue",
+        None,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeveloperReviewActionInput {
+    reason: Option<String>,
+}
+
+async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match developer_reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let kind = ctx.param("kind").map(String::as_str).unwrap_or("");
+    let resource_id = ctx.param("resource_id").map(String::as_str).unwrap_or("");
+    let action = ctx.param("action").map(String::as_str).unwrap_or("");
+    if !valid_review_resource_id(resource_id) {
+        return error("RESOURCE_ID_INVALID", "審査対象IDが無効です。", 422);
+    }
+    let rejection = matches!(action, "reject");
+    let reason = if rejection {
+        let bytes = req.bytes().await?;
+        if bytes.len() > MAX_JSON_BODY_BYTES {
+            return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+        }
+        let input: DeveloperReviewActionInput = match serde_json::from_slice(&bytes) {
+            Ok(input) => input,
+            Err(_) => return error("JSON_INVALID", "JSONリクエストが無効です。", 400),
+        };
+        let reason = input.reason.unwrap_or_default().trim().to_owned();
+        if reason.is_empty() || reason.len() > 2000 {
+            return error(
+                "VALIDATION_ERROR",
+                "却下理由は1〜2000文字で入力してください。",
+                422,
+            );
+        }
+        Some(reason)
+    } else {
+        None
+    };
+    let (path, body) = match (kind, action) {
+        ("developers", "verify") => (
+            format!("/v1/admin/developers/{resource_id}/verification"),
+            Some(serde_json::to_vec(
+                &json!({"verification_status": "verified"}),
+            )?),
+        ),
+        ("developers", "reject") => (
+            format!("/v1/admin/developers/{resource_id}/verification"),
+            Some(serde_json::to_vec(
+                &json!({"verification_status": "rejected"}),
+            )?),
+        ),
+        ("creation-requests", "approve") => (
+            format!("/v1/admin/developer-creation-requests/{resource_id}/approve"),
+            Some(b"{}".to_vec()),
+        ),
+        ("creation-requests", "reject") => (
+            format!("/v1/admin/developer-creation-requests/{resource_id}/reject"),
+            Some(serde_json::to_vec(&json!({"rejection_reason": reason}))?),
+        ),
+        ("certificate-requests", "issue") => (
+            format!("/v1/admin/certificate-requests/{resource_id}/issue"),
+            None,
+        ),
+        ("certificate-requests", "reject") => (
+            format!("/v1/admin/certificate-requests/{resource_id}/reject"),
+            Some(serde_json::to_vec(&json!({"rejection_reason": reason}))?),
+        ),
+        _ => return error("REVIEW_ACTION_INVALID", "審査操作が無効です。", 404),
+    };
+    let response =
+        upstream::developer_ca_admin(&ctx.env, &account.id, Method::Post, &path, body).await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            &format!("developer_ca.{kind}.{action}"),
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
 }
 
 async fn review_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -385,6 +517,11 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         )
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/certificates/:certificate_id", proxy_route)
+        .get_async("/v1/developer-reviews", developer_review_queue)
+        .post_async(
+            "/v1/developer-reviews/:kind/:resource_id/:action",
+            developer_review_action,
+        )
         .get_async("/v1/app-store/reviews", review_list)
         .get_async("/v1/app-store/reviews/:release_id", review_detail)
         .post_async("/v1/app-store/reviews/:release_id/approve", approve_review)
@@ -422,6 +559,8 @@ mod tests {
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         assert!(!production.contains(".post_async(\"/v1/admin/"));
         assert!(production.contains("/v1/app-store/reviews"));
+        assert!(production.contains("/v1/developer-reviews"));
+        assert!(!production.contains(".post_async(\"/v1/admin/"));
     }
 
     #[test]
