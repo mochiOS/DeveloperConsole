@@ -3,6 +3,7 @@ const toastRegion = document.querySelector("#toast-region");
 
 let account = null;
 let appStoreReviewer = false;
+let developerCaReviewer = false;
 let developers = [];
 let creationRequests = [];
 let detailRequestId = 0;
@@ -108,6 +109,7 @@ function activeRoute() {
   const hash = window.location.hash || "#overview";
   if (hash.startsWith("#developers")) return "developers";
   if (hash === "#requests") return "requests";
+  if (hash === "#developer-reviews") return "developer-reviews";
   if (hash.startsWith("#reviews")) return "reviews";
   return "overview";
 }
@@ -118,6 +120,7 @@ function sidebar() {
     <a href="#overview" ${active === "overview" ? 'aria-current="page"' : ""}>${icon("dashboard")}概要</a>
     <a href="#developers" ${active === "developers" ? 'aria-current="page"' : ""}>${icon("badge")}Developers</a>
     <a href="#requests" ${active === "requests" ? 'aria-current="page"' : ""}>${icon("description")}追加申請</a>
+    ${developerCaReviewer ? `<a href="#developer-reviews" ${active === "developer-reviews" ? 'aria-current="page"' : ""}>${icon("security")}Developer審査</a>` : ""}
     ${appStoreReviewer ? `<a href="#reviews" ${active === "reviews" ? 'aria-current="page"' : ""}>${icon("fact_check")}App審査</a>` : ""}
   </nav><div class="sidebar__account"><p class="sidebar__label">ACCOUNT</p><nav>
     <a href="https://accounts.mochios.org/#account" target="_blank" rel="noopener noreferrer">${icon("settings")}Account設定</a>
@@ -243,8 +246,10 @@ async function renderDeveloperDetail(developerId) {
         </section>
         <form class="card" id="certificate-request-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>証明書を申請</h3><p>秘密鍵ではなくEd25519公開鍵だけを入力します。</p></div></div><div class="card__body form">
           <label class="field"><span>公開鍵（Base64）</span><textarea class="textarea" name="subject_public_key" required></textarea><small>32 byteのEd25519公開鍵をBase64で入力してください。</small></label>
-          <label class="field"><span>Package IDスコープ</span><input class="input" name="package_id_scopes" placeholder="org.mochios.example.*" required><small>複数の場合はカンマで区切ります。</small></label>
-          <label class="field"><span>許可Capability</span><input class="input" name="allowed_capabilities" placeholder="network, notifications"><small>複数の場合はカンマで区切ります。</small></label>
+          <label class="field mpkg-picker"><span>MPKGから自動入力</span><input class="input input--file" type="file" accept=".mpkg,application/gzip" data-mpkg-input><small>端末内だけでmanifest.tomlを読みます。.mpkg本体はサーバーへ送信しません。</small></label>
+          <div class="manifest-result" data-mpkg-result hidden></div>
+          <label class="field"><span>Package IDスコープ</span><input class="input" name="package_id_scopes" placeholder="org.mochios.example" required><small>MPKGのpackage.idから自動入力できます。必要なら送信前に編集してください。</small></label>
+          <label class="field"><span>許可Capability</span><textarea class="textarea textarea--compact" name="allowed_capabilities" placeholder="fs.read.all, window.create"></textarea><small>すべてのbinary.requiresを重複なしで自動入力できます。</small></label>
           <span class="field-error" data-error hidden></span>
         </div><div class="card__footer"><button class="button button--primary" type="submit" ${developer.verification_status !== "verified" ? "disabled title=\"Developerの確認完了後に申請できます\"" : ""}>発行を申請</button></div></form>
       </div></section>`);
@@ -317,6 +322,48 @@ async function renderReviewDetail(releaseId) {
   }
 }
 
+function decisionForms(kind, resourceId, positiveAction, positiveLabel) {
+  return `<div class="decision-actions">
+    <form class="inline-actions developer-review-form" data-kind="${escapeHtml(kind)}" data-resource-id="${escapeHtml(resourceId)}" data-review-action="${escapeHtml(positiveAction)}">
+      <button class="button button--primary" type="submit">${escapeHtml(positiveLabel)}</button><span class="field-error" data-error hidden></span>
+    </form>
+    <form class="reject-row developer-review-form" data-kind="${escapeHtml(kind)}" data-resource-id="${escapeHtml(resourceId)}" data-review-action="reject">
+      <label class="field"><span>却下理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label>
+      <button class="button button--danger" type="submit">却下</button><span class="field-error" data-error hidden></span>
+    </form>
+  </div>`;
+}
+
+function reviewQueueSection(title, description, items, renderItem) {
+  return `<section class="section"><div class="section-title"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><span class="queue-count">${items.length}</span></div>
+    ${items.length ? `<div class="review-queue">${items.map(renderItem).join("")}</div>` : `<div class="card empty">${icon("check_circle")}<h3>審査待ちはありません</h3></div>`}
+  </section>`;
+}
+
+async function renderDeveloperReviews() {
+  if (!developerCaReviewer) return renderOverview();
+  app.innerHTML = shell(`${heading("DEVELOPER CA", "Developer審査", "Developer確認、追加作成申請、証明書発行申請を審査します。")}<div class="card empty"><span class="spinner"></span></div>`);
+  try {
+    const queue = await api("/v1/developer-reviews");
+    const developerItems = queue.developers || [];
+    const creationItems = queue.developer_creation_requests || [];
+    const certificateItems = queue.certificate_requests || [];
+    document.title = "Developer審査 | mochiOS Console";
+    app.innerHTML = shell(`${heading("DEVELOPER CA", "Developer審査", "承認操作は監査ログへ記録されます。証明書ではPackage IDとCapabilityを必ず確認してください。")}
+      <section class="metrics" aria-label="Developer審査概要">
+        <article class="metric"><span>Developer確認</span><strong>${developerItems.length}</strong></article>
+        <article class="metric"><span>追加作成申請</span><strong>${creationItems.length}</strong></article>
+        <article class="metric"><span>証明書申請</span><strong>${certificateItems.length}</strong></article>
+      </section>
+      ${reviewQueueSection("Developer確認", "公開者・署名主体として使用できるDeveloperか確認します。", developerItems, (developer) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(developer.display_name)}</h3><p><code>${escapeHtml(developer.id)}</code></p></div><span class="badges">${statusBadge(developer.developer_type)}${statusBadge(developer.verification_status)}</span></div>${decisionForms("developers", developer.id, "verify", "確認済みにする")}</article>`)}
+      ${reviewQueueSection("追加Developer作成申請", "標準上限を超えるDeveloper作成理由を確認します。", creationItems, (request) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.requested_display_name)}</h3><p>${escapeHtml(request.reason)}</p></div><span class="badges">${statusBadge(request.requested_developer_type)}${statusBadge(request.status)}</span></div><div class="card__body"><dl class="detail-list"><div><dt>申請Account</dt><dd><code>${escapeHtml(request.account_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("creation-requests", request.id, "approve", "作成枠を承認")}</article>`)}
+      ${reviewQueueSection("Developer Certificate申請", "公開鍵、Package ID scope、要求Capabilityを照合して発行します。", certificateItems, (request) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.developer_display_name)}</h3><p><code>${escapeHtml(request.developer_id)}</code></p></div>${statusBadge(request.status)}</div><div class="card__body"><dl class="detail-list"><div><dt>Package ID scope</dt><dd class="token-list">${(request.package_id_scopes || []).map((scope) => `<code>${escapeHtml(scope)}</code>`).join("") || "—"}</dd></div><div><dt>Capability</dt><dd class="token-list">${(request.allowed_capabilities || []).map((capability) => `<code>${escapeHtml(capability)}</code>`).join("") || "なし"}</dd></div><div><dt>Subject key</dt><dd><code>${escapeHtml(request.subject_key_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("certificate-requests", request.id, "issue", "証明書を発行")}</article>`)}
+    `);
+  } catch (error) {
+    app.innerHTML = shell(`${heading("DEVELOPER CA", "審査一覧を取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-developer-reviews">再試行</button></p></div>`);
+  }
+}
+
 async function renderRoute() {
   if (!account) return renderLogin();
   const hash = window.location.hash || "#overview";
@@ -331,6 +378,7 @@ async function renderRoute() {
   detailRequestId += 1;
   if (hash === "#developers") return renderDevelopers();
   if (hash === "#requests") return renderRequests();
+  if (hash === "#developer-reviews") return renderDeveloperReviews();
   if (hash === "#reviews") return renderReviews();
   renderOverview();
 }
@@ -380,12 +428,14 @@ document.addEventListener("click", async (event) => {
     if (!card.hidden) card.querySelector("input")?.focus();
   }
   if (button.dataset.action === "reload-reviews") await renderReviews();
+  if (button.dataset.action === "reload-developer-reviews") await renderDeveloperReviews();
   if (button.dataset.action === "logout") {
     button.disabled = true;
     try {
       await api("/v1/session/logout", { method: "POST" });
       account = null;
       appStoreReviewer = false;
+      developerCaReviewer = false;
       developers = [];
       creationRequests = [];
       window.location.hash = "";
@@ -394,6 +444,28 @@ document.addEventListener("click", async (event) => {
       showToast("ログアウトできませんでした", error.message, "error");
       button.disabled = false;
     }
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const input = event.target.closest("[data-mpkg-input]");
+  if (!input) return;
+  const form = input.closest("form");
+  const resultElement = form.querySelector("[data-mpkg-result]");
+  const file = input.files?.[0];
+  if (!file) return;
+  resultElement.hidden = false;
+  resultElement.className = "manifest-result manifest-result--loading";
+  resultElement.textContent = "manifest.tomlを端末内で解析しています…";
+  try {
+    const manifest = await globalThis.MochiMpkgManifest.inspectMpkg(file);
+    form.elements.package_id_scopes.value = manifest.packageId;
+    form.elements.allowed_capabilities.value = manifest.capabilities.join(", ");
+    resultElement.className = "manifest-result manifest-result--success";
+    resultElement.innerHTML = `<strong>${escapeHtml(manifest.packageId)}</strong><span>${manifest.binaryCount} binary · ${manifest.capabilities.length} capabilities</span>`;
+  } catch (error) {
+    resultElement.className = "manifest-result manifest-result--error";
+    resultElement.textContent = error.message || ".mpkgを解析できませんでした。";
   }
 });
 
@@ -456,6 +528,20 @@ document.addEventListener("submit", async (event) => {
       window.location.hash = "#reviews";
     });
   }
+  if (form.classList.contains("developer-review-form")) {
+    await submitForm(form, async () => {
+      const action = form.dataset.reviewAction;
+      const values = formValues(form);
+      const options = { method: "POST" };
+      if (action === "reject") {
+        options.headers = { "Content-Type": "application/json" };
+        options.body = JSON.stringify({ reason: values.reason.trim() });
+      }
+      await api(`/v1/developer-reviews/${encodeURIComponent(form.dataset.kind)}/${encodeURIComponent(form.dataset.resourceId)}/${encodeURIComponent(action)}`, options);
+      showToast(action === "reject" ? "申請を却下しました" : "審査操作を完了しました");
+      await renderDeveloperReviews();
+    });
+  }
 });
 
 window.addEventListener("hashchange", () => void renderRoute());
@@ -465,6 +551,7 @@ async function initialize() {
     const result = await api("/v1/session/me");
     account = result.account;
     appStoreReviewer = result.app_store_reviewer === true;
+    developerCaReviewer = result.developer_ca_reviewer === true;
     await refreshWorkspace();
   } catch (error) {
     if (error.status !== 401) showToast("Consoleを読み込めませんでした", error.message, "error");
