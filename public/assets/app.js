@@ -322,16 +322,35 @@ async function renderReviewDetail(releaseId) {
   }
 }
 
-function decisionForms(kind, resourceId, positiveAction, positiveLabel) {
+function decisionForms(kind, resourceId, positiveAction, positiveLabel, positiveEnabled = true) {
   return `<div class="decision-actions">
     <form class="inline-actions developer-review-form" data-kind="${escapeHtml(kind)}" data-resource-id="${escapeHtml(resourceId)}" data-review-action="${escapeHtml(positiveAction)}">
-      <button class="button button--primary" type="submit">${escapeHtml(positiveLabel)}</button><span class="field-error" data-error hidden></span>
+      <button class="button button--primary" type="submit" ${positiveEnabled ? "" : 'disabled title="先にすべてのPolicyを許可してください"'}>${escapeHtml(positiveLabel)}</button><span class="field-error" data-error hidden></span>
     </form>
     <form class="reject-row developer-review-form" data-kind="${escapeHtml(kind)}" data-resource-id="${escapeHtml(resourceId)}" data-review-action="reject">
       <label class="field"><span>却下理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label>
       <button class="button button--danger" type="submit">却下</button><span class="field-error" data-error hidden></span>
     </form>
   </div>`;
+}
+
+function policyGrantForm(developerId, kind, value, label) {
+  return `<form class="inline-actions policy-grant-form" data-developer-id="${escapeHtml(developerId)}" data-policy-kind="${escapeHtml(kind)}" data-policy-value="${escapeHtml(value)}">
+    <button class="button button--secondary" type="submit">${escapeHtml(label)}</button><span class="field-error" data-error hidden></span>
+  </form>`;
+}
+
+function certificateReviewCard(request, policy) {
+  const activeScopes = new Set((policy?.package_scopes || []).filter((item) => item.status === "active").map((item) => item.scope));
+  const activeCapabilities = new Set((policy?.capabilities || []).filter((item) => item.status === "active").map((item) => item.capability));
+  const globalCapabilities = new Set((policy?.global_issuable_capabilities || []).filter((item) => item.status === "active").map((item) => item.capability));
+  const requestedScopes = request.package_id_scopes || [];
+  const requestedCapabilities = request.allowed_capabilities || [];
+  const policyReady = requestedScopes.every((scope) => activeScopes.has(scope))
+    && requestedCapabilities.every((capability) => activeCapabilities.has(capability) && globalCapabilities.has(capability));
+  const scopeRows = requestedScopes.map((scope) => `<div class="policy-row"><code>${escapeHtml(scope)}</code>${activeScopes.has(scope) ? statusBadge("approved") : policyGrantForm(request.developer_id, "package-scopes", scope, "Developerに許可")}</div>`).join("") || "—";
+  const capabilityRows = requestedCapabilities.map((capability) => `<div class="policy-row"><code>${escapeHtml(capability)}</code><div class="inline-actions">${activeCapabilities.has(capability) ? statusBadge("approved") : policyGrantForm(request.developer_id, "capabilities", capability, "Developerに許可")}${globalCapabilities.has(capability) ? statusBadge("approved") : policyGrantForm(request.developer_id, "global-capabilities", capability, "全体で発行可能にする")}</div></div>`).join("") || "なし";
+  return `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.developer_display_name)}</h3><p><code>${escapeHtml(request.developer_id)}</code></p></div>${statusBadge(request.status)}</div><div class="card__body"><dl class="detail-list"><div><dt>Package ID scope</dt><dd class="policy-list">${scopeRows}</dd></div><div><dt>Capability</dt><dd class="policy-list">${capabilityRows}</dd></div><div><dt>Subject key</dt><dd><code>${escapeHtml(request.subject_key_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("certificate-requests", request.id, "issue", "証明書を発行", policyReady)}</article>`;
 }
 
 function reviewQueueSection(title, description, items, renderItem) {
@@ -348,6 +367,8 @@ async function renderDeveloperReviews() {
     const developerItems = queue.developers || [];
     const creationItems = queue.developer_creation_requests || [];
     const certificateItems = queue.certificate_requests || [];
+    const policyEntries = await Promise.all([...new Set(certificateItems.map((request) => request.developer_id))].map(async (developerId) => [developerId, await api(`/v1/developer-reviews/developers/${encodeURIComponent(developerId)}/policy`)]));
+    const policies = new Map(policyEntries);
     document.title = "Developer審査 | mochiOS Console";
     app.innerHTML = shell(`${heading("DEVELOPER CA", "Developer審査", "承認操作は監査ログへ記録されます。証明書ではPackage IDとCapabilityを必ず確認してください。")}
       <section class="metrics" aria-label="Developer審査概要">
@@ -357,7 +378,7 @@ async function renderDeveloperReviews() {
       </section>
       ${reviewQueueSection("Developer確認", "公開者・署名主体として使用できるDeveloperか確認します。", developerItems, (developer) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(developer.display_name)}</h3><p><code>${escapeHtml(developer.id)}</code></p></div><span class="badges">${statusBadge(developer.developer_type)}${statusBadge(developer.verification_status)}</span></div>${decisionForms("developers", developer.id, "verify", "確認済みにする")}</article>`)}
       ${reviewQueueSection("追加Developer作成申請", "標準上限を超えるDeveloper作成理由を確認します。", creationItems, (request) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.requested_display_name)}</h3><p>${escapeHtml(request.reason)}</p></div><span class="badges">${statusBadge(request.requested_developer_type)}${statusBadge(request.status)}</span></div><div class="card__body"><dl class="detail-list"><div><dt>申請Account</dt><dd><code>${escapeHtml(request.account_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("creation-requests", request.id, "approve", "作成枠を承認")}</article>`)}
-      ${reviewQueueSection("Developer Certificate申請", "公開鍵、Package ID scope、要求Capabilityを照合して発行します。", certificateItems, (request) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.developer_display_name)}</h3><p><code>${escapeHtml(request.developer_id)}</code></p></div>${statusBadge(request.status)}</div><div class="card__body"><dl class="detail-list"><div><dt>Package ID scope</dt><dd class="token-list">${(request.package_id_scopes || []).map((scope) => `<code>${escapeHtml(scope)}</code>`).join("") || "—"}</dd></div><div><dt>Capability</dt><dd class="token-list">${(request.allowed_capabilities || []).map((capability) => `<code>${escapeHtml(capability)}</code>`).join("") || "なし"}</dd></div><div><dt>Subject key</dt><dd><code>${escapeHtml(request.subject_key_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("certificate-requests", request.id, "issue", "証明書を発行")}</article>`)}
+      ${reviewQueueSection("Developer Certificate申請", "MPKG manifest由来のPackage ID scopeとCapabilityをPolicyへ明示許可してから発行します。", certificateItems, (request) => certificateReviewCard(request, policies.get(request.developer_id)))}
     `);
   } catch (error) {
     app.innerHTML = shell(`${heading("DEVELOPER CA", "審査一覧を取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-developer-reviews">再試行</button></p></div>`);
@@ -526,6 +547,22 @@ document.addEventListener("submit", async (event) => {
       await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: values.message.trim() }) });
       showToast("Releaseを却下しました");
       window.location.hash = "#reviews";
+    });
+  }
+  if (form.classList.contains("policy-grant-form")) {
+    await submitForm(form, async () => {
+      const kind = form.dataset.policyKind;
+      const value = form.dataset.policyValue;
+      const path = kind === "global-capabilities"
+        ? "/v1/developer-reviews/global-capabilities"
+        : `/v1/developer-reviews/developers/${encodeURIComponent(form.dataset.developerId)}/policy/${encodeURIComponent(kind)}`;
+      await api(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      });
+      showToast(kind === "global-capabilities" ? "Capabilityを全体で発行可能にしました" : "Developer Policyへ許可を追加しました");
+      await renderDeveloperReviews();
     });
   }
   if (form.classList.contains("developer-review-form")) {

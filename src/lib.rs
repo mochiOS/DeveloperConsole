@@ -285,6 +285,125 @@ async fn developer_review_queue(req: Request, ctx: RouteContext<()>) -> Result<R
     .await
 }
 
+async fn developer_policy(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match developer_reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let developer_id = ctx.param("developer_id").map(String::as_str).unwrap_or("");
+    if !valid_review_resource_id(developer_id) {
+        return error("DEVELOPER_ID_INVALID", "Developer IDが無効です。", 422);
+    }
+    upstream::developer_ca_admin(
+        &ctx.env,
+        &account.id,
+        Method::Get,
+        &format!("/v1/admin/developers/{developer_id}/policy"),
+        None,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyValueInput {
+    value: String,
+}
+
+fn valid_policy_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'*'))
+}
+
+async fn developer_policy_grant(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match developer_reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let developer_id = ctx.param("developer_id").map(String::as_str).unwrap_or("");
+    if !valid_review_resource_id(developer_id) {
+        return error("DEVELOPER_ID_INVALID", "Developer IDが無効です。", 422);
+    }
+    let bytes = req.bytes().await?;
+    if bytes.len() > MAX_JSON_BODY_BYTES {
+        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+    }
+    let input: PolicyValueInput = match serde_json::from_slice::<PolicyValueInput>(&bytes) {
+        Ok(input) if valid_policy_value(input.value.trim()) => input,
+        _ => return error("POLICY_VALUE_INVALID", "権限値が無効です。", 422),
+    };
+    let value = input.value.trim();
+    let kind = ctx.param("kind").map(String::as_str).unwrap_or("");
+    let (path, body) = match kind {
+        "package-scopes" => (
+            format!("/v1/admin/developers/{developer_id}/package-scopes"),
+            serde_json::to_vec(&json!({"scope": value}))?,
+        ),
+        "capabilities" => (
+            format!("/v1/admin/developers/{developer_id}/capabilities"),
+            serde_json::to_vec(&json!({"capability": value}))?,
+        ),
+        _ => return error("POLICY_KIND_INVALID", "権限種別が無効です。", 404),
+    };
+    let response =
+        upstream::developer_ca_admin(&ctx.env, &account.id, Method::Post, &path, Some(body))
+            .await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            &format!("developer_ca.policy.{kind}.granted"),
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
+}
+
+async fn global_capability_enable(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match developer_reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let bytes = req.bytes().await?;
+    if bytes.len() > MAX_JSON_BODY_BYTES {
+        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+    }
+    let input: PolicyValueInput = match serde_json::from_slice::<PolicyValueInput>(&bytes) {
+        Ok(input) if valid_policy_value(input.value.trim()) => input,
+        _ => return error("CAPABILITY_INVALID", "Capabilityが無効です。", 422),
+    };
+    let response = upstream::developer_ca_admin(
+        &ctx.env,
+        &account.id,
+        Method::Post,
+        "/v1/admin/global-capabilities",
+        Some(serde_json::to_vec(
+            &json!({"capability": input.value.trim()}),
+        )?),
+    )
+    .await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            "developer_ca.policy.global_capability.enabled",
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeveloperReviewActionInput {
@@ -518,6 +637,18 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/certificates/:certificate_id", proxy_route)
         .get_async("/v1/developer-reviews", developer_review_queue)
+        .get_async(
+            "/v1/developer-reviews/developers/:developer_id/policy",
+            developer_policy,
+        )
+        .post_async(
+            "/v1/developer-reviews/developers/:developer_id/policy/:kind",
+            developer_policy_grant,
+        )
+        .post_async(
+            "/v1/developer-reviews/global-capabilities",
+            global_capability_enable,
+        )
         .post_async(
             "/v1/developer-reviews/:kind/:resource_id/:action",
             developer_review_action,
@@ -568,5 +699,37 @@ mod tests {
         assert!(valid_release_id("rel_019f9d57"));
         assert!(!valid_release_id("../release"));
         assert!(!valid_release_id("release?status=approved"));
+    }
+
+    #[test]
+    fn developer_policy_routes_are_fixed_and_values_cannot_inject_paths() {
+        let source = include_str!("lib.rs");
+        assert!(source.contains("/v1/developer-reviews/developers/:developer_id/policy/:kind"));
+        assert!(source.contains("/v1/developer-reviews/global-capabilities"));
+        assert!(valid_policy_value("org.mochios.example"));
+        assert!(valid_policy_value("window.create"));
+        assert!(!valid_policy_value("../admin"));
+        assert!(!valid_policy_value("window.create?override=true"));
+    }
+
+    #[test]
+    fn developer_ca_upstream_uses_only_signed_bearer_tokens() {
+        let source = include_str!("upstream.rs");
+        let developer_ca = source
+            .split("pub async fn developer_ca(")
+            .nth(1)
+            .unwrap_or_default()
+            .split("pub async fn app_store(")
+            .next()
+            .unwrap_or_default();
+        assert!(developer_ca.contains("developer_ca_headers"));
+        for forbidden in [
+            "X-Admin-Token",
+            "X-Admin-Account-ID",
+            "X-Console-Service-Token",
+            "X-Account-ID",
+        ] {
+            assert!(!developer_ca.contains(forbidden));
+        }
     }
 }
