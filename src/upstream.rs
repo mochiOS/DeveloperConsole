@@ -1,9 +1,53 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
+use ed25519_dalek::SigningKey;
+use mochios_developer_ca_auth_token::{Claims, issue};
 use serde_json::json;
-use worker::{Env, Headers, Method, RequestInit, Response, Result, wasm_bindgen::JsValue};
+use worker::{Date, Env, Headers, Method, RequestInit, Response, Result, wasm_bindgen::JsValue};
 
 use crate::model::{Account, AccountEnvelope};
 
 const MAX_UPSTREAM_RESPONSE_BYTES: usize = 1024 * 1024;
+
+fn developer_ca_token(env: &Env, account_id: &str, admin: bool) -> Result<String> {
+    let bytes = STANDARD
+        .decode(env.secret("DEVELOPER_CA_TOKEN_SIGNING_KEY")?.to_string())
+        .map_err(|_| worker::Error::RustError("invalid DeveloperCA token signing key".into()))?;
+    let seed: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| worker::Error::RustError("invalid DeveloperCA token signing key".into()))?;
+    let now = Date::now().as_millis() / 1000;
+    let claims = Claims {
+        iss: "console.mochios.org".into(),
+        sub: account_id.into(),
+        aud: if admin {
+            "developer-ca-admin".into()
+        } else {
+            "developer-ca".into()
+        },
+        iat: now,
+        exp: now + 60,
+        jti: crate::security::random_token()
+            .map_err(|_| worker::Error::RustError("secure random generation failed".into()))?,
+        role: if admin {
+            "developer_ca_reviewer".into()
+        } else {
+            "delegated_account".into()
+        },
+        act: Some("mochios-console".into()),
+    };
+    issue(&claims, &SigningKey::from_bytes(&seed))
+        .map_err(|error| worker::Error::RustError(error.to_string()))
+}
+
+fn developer_ca_headers(env: &Env, account_id: &str, admin: bool) -> Result<Headers> {
+    let headers = Headers::new();
+    headers.set(
+        "Authorization",
+        &format!("Bearer {}", developer_ca_token(env, account_id, admin)?),
+    )?;
+    headers.set("Accept", "application/json")?;
+    Ok(headers)
+}
 
 fn console_headers(env: &Env) -> Result<Headers> {
     let headers = Headers::new();
@@ -60,8 +104,7 @@ pub async fn developer_ca(
     path: &str,
     body: Option<Vec<u8>>,
 ) -> Result<Response> {
-    let headers = console_headers(env)?;
-    headers.set("X-Account-ID", account_id)?;
+    let headers = developer_ca_headers(env, account_id, false)?;
     if body.is_some() {
         headers.set("Content-Type", "application/json")?;
     }
@@ -93,13 +136,7 @@ pub async fn developer_ca_admin(
     path: &str,
     body: Option<Vec<u8>>,
 ) -> Result<Response> {
-    let headers = Headers::new();
-    headers.set(
-        "X-Admin-Token",
-        &env.secret("DEVELOPER_CA_ADMIN_TOKEN")?.to_string(),
-    )?;
-    headers.set("X-Admin-Account-ID", account_id)?;
-    headers.set("Accept", "application/json")?;
+    let headers = developer_ca_headers(env, account_id, true)?;
     if body.is_some() {
         headers.set("Content-Type", "application/json")?;
     }
