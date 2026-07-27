@@ -10,12 +10,12 @@
 
 ## Secret
 
-同じランダム値を3サービスの`CONSOLE_SERVICE_TOKEN`へ設定します。通常の
-`SERVICE_TOKEN`や`ADMIN_TOKEN`とは別の値を使用してください。
+Accounts内部API用token、DeveloperCA短期token署名鍵、AppStore管理tokenを別々に
+設定します。DeveloperCAへは署名鍵の公開鍵だけを設定します。
 
 ```powershell
 npx wrangler secret put CONSOLE_SERVICE_TOKEN
-npx wrangler secret put DEVELOPER_CA_ADMIN_TOKEN
+npx wrangler secret put DEVELOPER_CA_TOKEN_SIGNING_KEY
 npx wrangler secret put APPSTORE_ADMIN_TOKEN
 ```
 
@@ -53,3 +53,7 @@ npx wrangler d1 execute mochios-console --remote --command "INSERT INTO develope
 
 各サービスで`cargo test`、Clippy、`npx wrangler deploy --dry-run`を通してから
 `npx wrangler deploy`を実行します。
+
+DeveloperCAとConsoleを同時に切り替えます。DeveloperCAへ対応する
+`CONSOLE_TOKEN_PUBLIC_KEY`を設定してからConsoleを公開してください。旧
+`DEVELOPER_CA_ADMIN_TOKEN`とDeveloperCA向け`CONSOLE_SERVICE_TOKEN`は削除できます。

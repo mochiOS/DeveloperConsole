@@ -14,12 +14,14 @@ Account、Accounts障害、応答不正はfail closedで拒否します。
 ## DeveloperCA連携
 
 ブラウザーはDeveloperCAを直接呼びません。Console Workerが許可した利用者APIだけを
-Service Bindingで転送し、`X-Account-ID`とConsole専用サービス認証を付与します。
+Service Bindingで転送します。Consoleは署名済み短期delegation tokenの`sub`へ現在の
+Account IDを固定し、DeveloperCAは署名とAccount active状態を再確認します。
 
 通常利用者へDeveloperCA管理APIを転送しません。`developer_ca_reviewers`へ登録された
 Accountだけが、固定された審査BFF APIを通してDeveloper確認、追加Developer作成申請、
-Certificate発行申請を操作できます。Console WorkerはDeveloperCA Service Bindingへ
-`DEVELOPER_CA_ADMIN_TOKEN`と審査担当Account IDを付与し、操作を監査ログへ記録します。
+Certificate発行申請と発行Policyを操作できます。Console Workerは60秒の署名済みadmin
+tokenを操作ごとに生成します。DeveloperCAのactorは署名済み`sub`だけから取得され、`jti`
+はreplay防止と監査へ使用されます。
 任意の管理パスを指定できるproxyは公開しません。
 
 ## MPKGからの証明書権限入力
@@ -29,8 +31,9 @@ Certificate発行申請を操作できます。Console WorkerはDeveloperCA Serv
 `[[binary]].requires`の和集合を許可Capabilityへ入力します。圧縮済み128 MiB、展開後
 512 MiB、10,000 entry、manifest 1 MiBの上限を設けます。
 
-これは入力補助であり信頼判定ではありません。利用者は送信前に編集・確認でき、
-DeveloperCAは従来どおり公開鍵、scope、Capabilityをfail closedで検証します。
+これは入力補助であり信頼判定ではありません。DeveloperCAは発行時にactive member、
+Developer Package scope grant、Developer Capability grant、global issuable Capabilityを
+再検証します。審査画面では不足Policyを明示的に許可するまで発行できません。
 
 ## App Store審査
 
