@@ -149,9 +149,6 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
 .manifest-result--success { background: #e8f6eb; color: var(--success); }
 .manifest-result--error { background: #fff0ef; color: var(--danger); }
 .policy-list { display: grid; gap: 8px; }
-.policy-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
-.policy-row > code { overflow-wrap: anywhere; }
-.policy-row .inline-actions { flex-wrap: wrap; justify-content: flex-end; }
 .section-title > div p { margin: 6px 0 0; color: var(--secondary); font-size: 12px; }
 .queue-count { display: grid; place-items: center; min-width: 28px; height: 28px; border-radius: 999px; background: var(--surface-muted); color: var(--secondary); font-size: 12px; font-weight: 700; }
 .review-queue { display: grid; gap: 14px; }

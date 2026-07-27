@@ -270,6 +270,18 @@ fn valid_review_resource_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
 }
 
+fn valid_revocation_reason_code(value: &str) -> bool {
+    matches!(
+        value,
+        "key_compromise"
+            | "developer_suspended"
+            | "certificate_replaced"
+            | "scope_violation"
+            | "administrative"
+            | "unspecified"
+    )
+}
+
 async fn developer_review_queue(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let account = match developer_reviewer_account(&req, &ctx.env).await? {
         Ok(account) => account,
@@ -285,129 +297,11 @@ async fn developer_review_queue(req: Request, ctx: RouteContext<()>) -> Result<R
     .await
 }
 
-async fn developer_policy(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let account = match developer_reviewer_account(&req, &ctx.env).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let developer_id = ctx.param("developer_id").map(String::as_str).unwrap_or("");
-    if !valid_review_resource_id(developer_id) {
-        return error("DEVELOPER_ID_INVALID", "Developer IDが無効です。", 422);
-    }
-    upstream::developer_ca_admin(
-        &ctx.env,
-        &account.id,
-        Method::Get,
-        &format!("/v1/admin/developers/{developer_id}/policy"),
-        None,
-    )
-    .await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PolicyValueInput {
-    value: String,
-}
-
-fn valid_policy_value(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'*'))
-}
-
-async fn developer_policy_grant(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let account = match developer_reviewer_account(&req, &ctx.env).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    if !mutation_origin_allowed(&req, &ctx.env)? {
-        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
-    }
-    let developer_id = ctx.param("developer_id").map(String::as_str).unwrap_or("");
-    if !valid_review_resource_id(developer_id) {
-        return error("DEVELOPER_ID_INVALID", "Developer IDが無効です。", 422);
-    }
-    let bytes = req.bytes().await?;
-    if bytes.len() > MAX_JSON_BODY_BYTES {
-        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
-    }
-    let input: PolicyValueInput = match serde_json::from_slice::<PolicyValueInput>(&bytes) {
-        Ok(input) if valid_policy_value(input.value.trim()) => input,
-        _ => return error("POLICY_VALUE_INVALID", "権限値が無効です。", 422),
-    };
-    let value = input.value.trim();
-    let kind = ctx.param("kind").map(String::as_str).unwrap_or("");
-    let (path, body) = match kind {
-        "package-scopes" => (
-            format!("/v1/admin/developers/{developer_id}/package-scopes"),
-            serde_json::to_vec(&json!({"scope": value}))?,
-        ),
-        "capabilities" => (
-            format!("/v1/admin/developers/{developer_id}/capabilities"),
-            serde_json::to_vec(&json!({"capability": value}))?,
-        ),
-        _ => return error("POLICY_KIND_INVALID", "権限種別が無効です。", 404),
-    };
-    let response =
-        upstream::developer_ca_admin(&ctx.env, &account.id, Method::Post, &path, Some(body))
-            .await?;
-    if response.status_code() < 400 {
-        store::record_review_action(
-            &ctx.env.d1("DB")?,
-            &account.id,
-            &format!("developer_ca.policy.{kind}.granted"),
-            now(),
-        )
-        .await?;
-    }
-    Ok(response)
-}
-
-async fn global_capability_enable(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let account = match developer_reviewer_account(&req, &ctx.env).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    if !mutation_origin_allowed(&req, &ctx.env)? {
-        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
-    }
-    let bytes = req.bytes().await?;
-    if bytes.len() > MAX_JSON_BODY_BYTES {
-        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
-    }
-    let input: PolicyValueInput = match serde_json::from_slice::<PolicyValueInput>(&bytes) {
-        Ok(input) if valid_policy_value(input.value.trim()) => input,
-        _ => return error("CAPABILITY_INVALID", "Capabilityが無効です。", 422),
-    };
-    let response = upstream::developer_ca_admin(
-        &ctx.env,
-        &account.id,
-        Method::Post,
-        "/v1/admin/global-capabilities",
-        Some(serde_json::to_vec(
-            &json!({"capability": input.value.trim()}),
-        )?),
-    )
-    .await?;
-    if response.status_code() < 400 {
-        store::record_review_action(
-            &ctx.env.d1("DB")?,
-            &account.id,
-            "developer_ca.policy.global_capability.enabled",
-            now(),
-        )
-        .await?;
-    }
-    Ok(response)
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeveloperReviewActionInput {
     reason: Option<String>,
+    reason_code: Option<String>,
 }
 
 async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -424,8 +318,8 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
     if !valid_review_resource_id(resource_id) {
         return error("RESOURCE_ID_INVALID", "審査対象IDが無効です。", 422);
     }
-    let rejection = matches!(action, "reject");
-    let reason = if rejection {
+    let requires_reason = matches!(action, "reject" | "revoke");
+    let (reason, reason_code) = if requires_reason {
         let bytes = req.bytes().await?;
         if bytes.len() > MAX_JSON_BODY_BYTES {
             return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
@@ -438,13 +332,23 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
         if reason.is_empty() || reason.len() > 2000 {
             return error(
                 "VALIDATION_ERROR",
-                "却下理由は1〜2000文字で入力してください。",
+                "理由は1〜2000文字で入力してください。",
                 422,
             );
         }
-        Some(reason)
+        let reason_code = input
+            .reason_code
+            .filter(|code| valid_revocation_reason_code(code));
+        if action == "revoke" && reason_code.is_none() {
+            return error(
+                "REVOCATION_REASON_CODE_INVALID",
+                "失効理由コードを選択してください。",
+                422,
+            );
+        }
+        (Some(reason), reason_code)
     } else {
-        None
+        (None, None)
     };
     let (path, body) = match (kind, action) {
         ("developers", "verify") => (
@@ -467,13 +371,11 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
             format!("/v1/admin/developer-creation-requests/{resource_id}/reject"),
             Some(serde_json::to_vec(&json!({"rejection_reason": reason}))?),
         ),
-        ("certificate-requests", "issue") => (
-            format!("/v1/admin/certificate-requests/{resource_id}/issue"),
-            None,
-        ),
-        ("certificate-requests", "reject") => (
-            format!("/v1/admin/certificate-requests/{resource_id}/reject"),
-            Some(serde_json::to_vec(&json!({"rejection_reason": reason}))?),
+        ("certificates", "revoke") => (
+            format!("/v1/admin/certificates/{resource_id}/revoke"),
+            Some(serde_json::to_vec(
+                &json!({"reason": reason, "reason_code": reason_code}),
+            )?),
         ),
         _ => return error("REVIEW_ACTION_INVALID", "審査操作が無効です。", 404),
     };
@@ -630,25 +532,10 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         )
         .get_async("/v1/developer-creation-requests", proxy_route)
         .post_async("/v1/developer-creation-requests", proxy_route)
-        .post_async(
-            "/v1/developers/:developer_id/certificate-requests",
-            proxy_route,
-        )
+        .post_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/certificates/:certificate_id", proxy_route)
         .get_async("/v1/developer-reviews", developer_review_queue)
-        .get_async(
-            "/v1/developer-reviews/developers/:developer_id/policy",
-            developer_policy,
-        )
-        .post_async(
-            "/v1/developer-reviews/developers/:developer_id/policy/:kind",
-            developer_policy_grant,
-        )
-        .post_async(
-            "/v1/developer-reviews/global-capabilities",
-            global_capability_enable,
-        )
         .post_async(
             "/v1/developer-reviews/:kind/:resource_id/:action",
             developer_review_action,
@@ -702,14 +589,22 @@ mod tests {
     }
 
     #[test]
-    fn developer_policy_routes_are_fixed_and_values_cannot_inject_paths() {
+    fn developer_certificate_admin_can_only_revoke_with_a_fixed_reason_code() {
         let source = include_str!("lib.rs");
-        assert!(source.contains("/v1/developer-reviews/developers/:developer_id/policy/:kind"));
-        assert!(source.contains("/v1/developer-reviews/global-capabilities"));
-        assert!(valid_policy_value("org.mochios.example"));
-        assert!(valid_policy_value("window.create"));
-        assert!(!valid_policy_value("../admin"));
-        assert!(!valid_policy_value("window.create?override=true"));
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let app = include_str!("../public/assets/app.js");
+        assert!(production.contains("/v1/developers/:developer_id/certificates"));
+        assert!(production.contains("(\"certificates\", \"revoke\")"));
+        assert!(production.contains("/v1/admin/certificates/{resource_id}/revoke"));
+        assert!(!production.contains("/v1/admin/certificate-requests"));
+        assert!(!production.contains("developer_policy_grant"));
+        assert!(valid_revocation_reason_code("key_compromise"));
+        assert!(valid_revocation_reason_code("administrative"));
+        assert!(!valid_revocation_reason_code("../revoke"));
+        assert!(app.contains("data-mpkg-input required"));
+        assert!(app.contains("name=\"package_id_scopes\"") && app.contains("required readonly"));
+        assert!(app.contains("Certificateを発行しました"));
+        assert!(!app.contains("certificate-requests"));
     }
 
     #[test]
