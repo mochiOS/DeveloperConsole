@@ -96,6 +96,25 @@ pub async fn revoke_session(db: &D1Database, token: &str, now: i64) -> Result<()
     Ok(())
 }
 
+pub async fn is_app_store_reviewer(db: &D1Database, account_id: &str) -> Result<bool> {
+    Ok(db
+        .prepare("SELECT account_id FROM app_store_reviewers WHERE account_id = ?1 LIMIT 1")
+        .bind(&[value(account_id)])?
+        .first::<String>(Some("account_id"))
+        .await?
+        .is_some())
+}
+
+pub async fn record_review_action(
+    db: &D1Database,
+    account_id: &str,
+    event_type: &str,
+    now: i64,
+) -> Result<()> {
+    audit(db, Some(account_id), event_type, now)?.run().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +131,8 @@ mod tests {
         assert!(schema.contains("token_hash TEXT NOT NULL UNIQUE"));
         assert!(schema.contains("audit_logs_no_update"));
         assert!(!schema.contains("token TEXT"));
+
+        let reviewer_schema = include_str!("../migrations/0002_app_store_reviewers.sql");
+        assert!(reviewer_schema.contains("account_id TEXT PRIMARY KEY"));
     }
 }

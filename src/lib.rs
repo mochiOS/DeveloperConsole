@@ -8,6 +8,7 @@ use security::{
     AUTH_STATE_COOKIE, SESSION_COOKIE, constant_time_eq, expired_cookie, parse_cookie,
     random_token, secure_cookie,
 };
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use worker::*;
@@ -138,7 +139,13 @@ async fn auth_callback(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 
 async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     match current_account(&req, &ctx.env).await? {
-        Some(account) => json_response(&json!({"account": account}), 200),
+        Some(account) => {
+            let reviewer = store::is_app_store_reviewer(&ctx.env.d1("DB")?, &account.id).await?;
+            json_response(
+                &json!({"account": account, "app_store_reviewer": reviewer}),
+                200,
+            )
+        }
         None => error("UNAUTHENTICATED", "ログインが必要です。", 401),
     }
 }
@@ -193,6 +200,162 @@ async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     upstream::developer_ca(&ctx.env, &account.id, method, &path, body).await
 }
 
+fn valid_release_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+async fn reviewer_account(
+    req: &Request,
+    env: &Env,
+) -> Result<std::result::Result<Account, Response>> {
+    let Some(account) = current_account(req, env).await? else {
+        return Ok(Err(error("UNAUTHENTICATED", "ログインが必要です。", 401)?));
+    };
+    if !store::is_app_store_reviewer(&env.d1("DB")?, &account.id).await? {
+        return Ok(Err(error(
+            "REVIEWER_REQUIRED",
+            "App Store審査担当者だけが利用できます。",
+            403,
+        )?));
+    }
+    Ok(Ok(account))
+}
+
+async fn review_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Get,
+        "/v1/admin/releases?status=submitted",
+        None,
+    )
+    .await
+}
+
+async fn review_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let release_id = ctx.param("release_id").map(String::as_str).unwrap_or("");
+    if !valid_release_id(release_id) {
+        return error("RELEASE_ID_INVALID", "Release IDが無効です。", 422);
+    }
+    upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Get,
+        &format!("/v1/admin/releases/{release_id}"),
+        None,
+    )
+    .await
+}
+
+async fn approve_review(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let release_id = ctx.param("release_id").map(String::as_str).unwrap_or("");
+    if !valid_release_id(release_id) {
+        return error("RELEASE_ID_INVALID", "Release IDが無効です。", 422);
+    }
+    let response = upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Post,
+        &format!("/v1/admin/releases/{release_id}/approve"),
+        None,
+    )
+    .await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            "app_store.release.approved",
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RejectReviewInput {
+    message: String,
+}
+
+async fn reject_review(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let release_id = ctx.param("release_id").map(String::as_str).unwrap_or("");
+    if !valid_release_id(release_id) {
+        return error("RELEASE_ID_INVALID", "Release IDが無効です。", 422);
+    }
+    if req
+        .headers()
+        .get("Content-Length")?
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_JSON_BODY_BYTES)
+    {
+        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+    }
+    let bytes = req.bytes().await?;
+    if bytes.len() > MAX_JSON_BODY_BYTES {
+        return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+    }
+    let input: RejectReviewInput = match serde_json::from_slice(&bytes) {
+        Ok(input) => input,
+        Err(_) => return error("JSON_INVALID", "JSONリクエストが無効です。", 400),
+    };
+    let message = input.message.trim();
+    if message.is_empty() || message.len() > 2000 {
+        return error(
+            "VALIDATION_ERROR",
+            "却下理由は1〜2000文字で入力してください。",
+            422,
+        );
+    }
+    let body = serde_json::to_vec(&RejectReviewInput {
+        message: message.to_owned(),
+    })?;
+    let response = upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Post,
+        &format!("/v1/admin/releases/{release_id}/reject"),
+        Some(body),
+    )
+    .await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            "app_store.release.rejected",
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
+}
+
 async fn route(req: Request, env: Env) -> Result<Response> {
     Router::new()
         .get_async("/health", |_, _| async { health_response() })
@@ -222,6 +385,10 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         )
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
         .get_async("/v1/certificates/:certificate_id", proxy_route)
+        .get_async("/v1/app-store/reviews", review_list)
+        .get_async("/v1/app-store/reviews/:release_id", review_detail)
+        .post_async("/v1/app-store/reviews/:release_id/approve", approve_review)
+        .post_async("/v1/app-store/reviews/:release_id/reject", reject_review)
         .run(req, env)
         .await
 }
@@ -250,9 +417,17 @@ mod tests {
     }
 
     #[test]
-    fn no_admin_routes_are_exposed() {
+    fn app_store_admin_routes_are_not_exposed_directly() {
         let source = include_str!("lib.rs").to_ascii_lowercase();
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
-        assert!(!production.contains("/v1/admin/"));
+        assert!(!production.contains(".post_async(\"/v1/admin/"));
+        assert!(production.contains("/v1/app-store/reviews"));
+    }
+
+    #[test]
+    fn validates_release_ids_before_building_upstream_paths() {
+        assert!(valid_release_id("rel_019f9d57"));
+        assert!(!valid_release_id("../release"));
+        assert!(!valid_release_id("release?status=approved"));
     }
 }

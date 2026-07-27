@@ -32,7 +32,8 @@
   ],
   "services": [
     { "binding": "ACCOUNTS", "service": "mochios-accounts" },
-    { "binding": "DEVELOPER_CA", "service": "mochios-developer-ca" }
+    { "binding": "DEVELOPER_CA", "service": "mochios-developer-ca" },
+    { "binding": "APP_STORE", "service": "mochios-app-store-api" }
   ],
   "observability": {
     "enabled": true,
