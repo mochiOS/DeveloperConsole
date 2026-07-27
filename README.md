@@ -4,8 +4,13 @@
 実装したBFF、Cloudflare Workers Static Assets、D1セッションで構成します。
 
 ConsoleはDeveloper、Developer Member、追加Developer申請、Developer
-Certificate申請を操作します。allowlistへ登録された審査担当者は、検証済みApp Store Releaseの確認、承認、却下もブラウザから行えます。DeveloperCAの秘密鍵、`ADMIN_TOKEN`、Accountsの
-セッショントークンをブラウザーへ渡しません。
+Certificate申請を操作します。証明書申請時は`.mpkg`を端末内で展開し、
+`manifest.toml`の`package.id`と全`binary.requires`からscopeとCapabilityを
+自動入力できます。パッケージ本体はConsoleへ送信しません。
+
+allowlistへ登録された審査担当者は、Developer確認、追加作成申請、証明書発行申請、
+検証済みApp Store Releaseをブラウザーから審査できます。DeveloperCAの秘密鍵、
+管理token、Accountsのセッショントークンをブラウザーへ渡しません。
 
 ## 構成
 
@@ -15,6 +20,7 @@ Certificate申請を操作します。allowlistへ登録された審査担当者
   └─ Console Worker（HttpOnlyセッション）
         ├─ Accounts Service Binding
         ├─ DeveloperCA Service Binding
+        ├─ DeveloperCA管理BFF（審査担当者のみ）
         ├─ AppStore Service Binding（審査担当者のみ）
         ├─ D1（Consoleセッション）
         └─ Static Assets（日本語UI）
@@ -36,9 +42,12 @@ npx wrangler deploy --dry-run
 
 ```text
 CONSOLE_SERVICE_TOKEN=<Accounts、DeveloperCA、Consoleで共有するConsole専用ランダム値>
+DEVELOPER_CA_ADMIN_TOKEN=<DeveloperCAのADMIN_TOKENと同じ値>
 APPSTORE_ADMIN_TOKEN=<AppStore APIのADMIN_TOKENと同じ値>
 ```
 
-`APPSTORE_ADMIN_TOKEN`はConsole Worker内だけで使用します。HTML、JavaScript、APIレスポンスには含めません。審査担当者はConsole D1の`app_store_reviewers`で明示的に許可します。
+管理tokenはConsole Worker内だけで使用します。HTML、JavaScript、APIレスポンスには
+含めません。審査担当者はConsole D1の`developer_ca_reviewers`と
+`app_store_reviewers`で責務ごとに明示的に許可します。
 
 本番設定と手順は[docs/deployment.md](docs/deployment.md)を参照してください。

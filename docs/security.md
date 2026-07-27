@@ -7,7 +7,9 @@
 - JSONリクエストは64 KiBへ制限します。
 - AccountsとDeveloperCAの呼び出しにはService Bindingを使用します。
 - `CONSOLE_SERVICE_TOKEN`、session token、認可コードをログへ出力しません。
-- DeveloperCAの`ADMIN_TOKEN`とIntermediate秘密鍵をConsoleへ設定しません。
+- DeveloperCAのIntermediate秘密鍵をConsoleへ設定しません。`ADMIN_TOKEN`はConsole Worker Secretとしてのみ保持し、ブラウザーへ返しません。
+- DeveloperCA審査APIはConsole session、active Account、D1 reviewer allowlist、同一Originをすべて確認します。
+- `.mpkg`のmanifest抽出はブラウザー内だけで行い、パッケージ本体をConsole APIへ送信しません。
 - AppStoreの`ADMIN_TOKEN`はConsole Worker Secretとしてのみ保持し、ブラウザーへ返しません。
 - App Store審査APIはConsole session、active Account、D1 reviewer allowlist、同一Originをすべて確認します。
 - ブラウザーから任意のvalidation reportは受理せず、Rust reviewerの検証結果だけを審査対象にします。

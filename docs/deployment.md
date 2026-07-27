@@ -15,6 +15,7 @@
 
 ```powershell
 npx wrangler secret put CONSOLE_SERVICE_TOKEN
+npx wrangler secret put DEVELOPER_CA_ADMIN_TOKEN
 npx wrangler secret put APPSTORE_ADMIN_TOKEN
 ```
 
@@ -22,7 +23,8 @@ Secret値をコマンド引数、ログ、Git管理ファイルへ書かない�
 
 ## マイグレーション
 
-AccountsへConsole認可コード用migrationを、Consoleへsession・App Store reviewer用migrationを適用します。
+AccountsへConsole認可コード用migrationを、Consoleへsession・DeveloperCA reviewer・
+App Store reviewer用migrationを適用します。
 
 ```powershell
 cd ../Account
@@ -36,9 +38,11 @@ npx wrangler d1 migrations apply mochios-console --remote
 
 ```powershell
 npx wrangler d1 execute mochios-console --remote --command "INSERT INTO app_store_reviewers(account_id, created_at, created_by) VALUES('<Account UUID>', unixepoch(), '<登録者Account UUID>')"
+npx wrangler d1 execute mochios-console --remote --command "INSERT INTO developer_ca_reviewers(account_id, created_at, created_by) VALUES('<Account UUID>', unixepoch(), '<登録者Account UUID>')"
 ```
 
-削除は`DELETE FROM app_store_reviewers WHERE account_id='<Account UUID>'`で行います。ブラウザーから審査担当者を追加・削除するAPIはありません。
+削除は対象のallowlistテーブルからAccount UUIDを削除します。ブラウザーから審査担当者を
+追加・削除するAPIはありません。
 
 ## 反映順序
 
