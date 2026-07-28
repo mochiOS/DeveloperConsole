@@ -177,6 +177,13 @@ fn mutation_origin_allowed(req: &Request, env: &Env) -> Result<bool> {
     Ok(origin == expected.trim_end_matches('/'))
 }
 
+fn valid_idempotency_key(value: &str) -> bool {
+    (16..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
 async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(account) = current_account(&req, &ctx.env).await? else {
         return error("UNAUTHENTICATED", "ログインが必要です。", 401);
@@ -186,6 +193,19 @@ async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     }
     let path = req.path();
     let method = req.method();
+    let idempotency_key = if path.ends_with("/certificates/issue") {
+        let value = req.headers().get("X-Idempotency-Key")?.unwrap_or_default();
+        if !valid_idempotency_key(&value) {
+            return error(
+                "IDEMPOTENCY_KEY_INVALID",
+                "証明書発行リクエストを識別できません。",
+                422,
+            );
+        }
+        Some(value)
+    } else {
+        None
+    };
     let body = if matches!(method, Method::Post | Method::Patch | Method::Put) {
         if req
             .headers()
@@ -203,7 +223,15 @@ async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     } else {
         None
     };
-    upstream::developer_ca(&ctx.env, &account.id, method, &path, body).await
+    upstream::developer_ca(
+        &ctx.env,
+        &account.id,
+        method,
+        &path,
+        body,
+        idempotency_key.as_deref(),
+    )
+    .await
 }
 
 fn valid_release_id(value: &str) -> bool {
@@ -533,7 +561,7 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         .get_async("/v1/developer-creation-requests", proxy_route)
         .post_async("/v1/developer-creation-requests", proxy_route)
         .post_async(
-            "/v1/developers/:developer_id/certificates/register",
+            "/v1/developers/:developer_id/certificates/issue",
             proxy_route,
         )
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
@@ -596,7 +624,7 @@ mod tests {
         let source = include_str!("lib.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         let app = include_str!("../public/assets/app.js");
-        assert!(production.contains("/v1/developers/:developer_id/certificates/register"));
+        assert!(production.contains("/v1/developers/:developer_id/certificates/issue"));
         assert!(production.contains("(\"certificates\", \"revoke\")"));
         assert!(production.contains("/v1/admin/certificates/{resource_id}/revoke"));
         assert!(!production.contains("/v1/admin/certificate-requests"));
@@ -604,8 +632,10 @@ mod tests {
         assert!(valid_revocation_reason_code("key_compromise"));
         assert!(valid_revocation_reason_code("administrative"));
         assert!(!valid_revocation_reason_code("../revoke"));
-        assert!(app.contains("name=\"certificate_file\" required"));
-        assert!(app.contains("Certificateを登録しました"));
+        assert!(app.contains("name=\"public_key_file\" required"));
+        assert!(app.contains("name=\"mpkg_file\" required"));
+        assert!(app.contains("downloadCertificate(result.certificate)"));
+        assert!(!app.contains("certificates/register"));
         assert!(!app.contains("certificate-requests"));
     }
 

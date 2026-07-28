@@ -103,10 +103,14 @@ pub async fn developer_ca(
     method: Method,
     path: &str,
     body: Option<Vec<u8>>,
+    idempotency_key: Option<&str>,
 ) -> Result<Response> {
     let headers = developer_ca_headers(env, account_id, false)?;
     if body.is_some() {
         headers.set("Content-Type", "application/json")?;
+    }
+    if let Some(idempotency_key) = idempotency_key {
+        headers.set("X-Idempotency-Key", idempotency_key)?;
     }
     let mut init = RequestInit::new();
     init.with_method(method).with_headers(headers);
@@ -117,12 +121,27 @@ pub async fn developer_ca(
         .service("DEVELOPER_CA")?
         .fetch(format!("https://developer-ca.internal{path}"), Some(init))
         .await?;
+    if upstream
+        .headers()
+        .get("Content-Length")?
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_UPSTREAM_RESPONSE_BYTES)
+    {
+        return Err(worker::Error::RustError(
+            "DeveloperCA response exceeds the Console limit".into(),
+        ));
+    }
     let status = upstream.status_code();
     let content_type = upstream
         .headers()
         .get("Content-Type")?
         .unwrap_or_else(|| "application/json; charset=utf-8".into());
     let bytes = upstream.bytes().await?;
+    if bytes.len() > MAX_UPSTREAM_RESPONSE_BYTES {
+        return Err(worker::Error::RustError(
+            "DeveloperCA response exceeds the Console limit".into(),
+        ));
+    }
     let mut response = Response::from_bytes(bytes)?.with_status(status);
     response.headers_mut().set("Content-Type", &content_type)?;
     response.headers_mut().set("Cache-Control", "no-store")?;
