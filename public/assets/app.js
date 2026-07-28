@@ -97,12 +97,11 @@ function footer() {
 }
 
 function renderLogin() {
-  document.title = "Developer | mochiOS ID";
+  document.title = "Developer console | mochiOS ID";
   app.innerHTML = `<div class="login-page">${header()}<main class="login-main">
     <section class="login-copy">
-      <p class="login-kicker">mochiOS Developer</p>
-      <h1 class="login-title">つくる人のための<br>ワークスペース</h1>
-      <p class="login-lead">Developerアカウント、メンバー、署名証明書を、mochiOS IDと同じ場所から安全に管理できます。</p>
+      <h1 class="login-title">Easy to<br>Develop</h1>
+      <p class="login-lead">Developerアカウント、メンバー、署名証明書を簡単に管理できます。</p>
       <div class="login-features" aria-label="主な機能"><article><strong>Developer</strong><span>公開者と署名主体を管理します。</span></article><article><strong>メンバー</strong><span>役割ごとにアクセスを管理します。</span></article><article><strong>Certificate</strong><span>秘密鍵を端末から出さずに発行します。</span></article></div>
     </section>
     <section class="login-panel" aria-labelledby="login-title">
