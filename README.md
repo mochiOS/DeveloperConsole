@@ -4,10 +4,9 @@
 実装したBFF、Cloudflare Workers Static Assets、D1セッションで構成します。
 
 ConsoleはDeveloper、Developer Member、追加Developer申請、Developer
-Certificate発行を操作します。証明書発行時は`.mpkg`を端末内で展開し、
-`manifest.toml`の`package.id`と全`binary.requires`からscopeとCapabilityを
-自動入力します。パッケージ本体はConsoleへ送信せず、DeveloperCAが同じリクエスト内で
-Certificateを即時発行します。
+Certificate登録を操作します。CertificateはmochiOSの`msign`でRoot直署名したMCER v1を
+オフライン発行し、Consoleからファイルとして登録します。ConsoleとDeveloperCAは
+Certificateを発行しません。
 
 allowlistへ登録された担当者は、Developer確認、追加作成申請、Certificate失効、
 検証済みApp Store Releaseをブラウザーから審査できます。DeveloperCAの秘密鍵、

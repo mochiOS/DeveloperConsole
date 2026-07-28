@@ -250,17 +250,14 @@ async function renderDeveloperDetail(developerId) {
         <form id="add-member-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__body form"><div class="form-row"><label class="field"><span>Account ID</span><input class="input" name="account_id" required></label><label class="field"><span>ロール</span><select class="select" name="role"><option value="viewer">Viewer</option><option value="developer">Developer</option><option value="admin">Admin</option></select></label></div><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">メンバーを追加</button></div></form>
       </div></section>
       <section class="section"><div class="section-title"><h2>Developer Certificates</h2></div><div class="grid">
-        <section class="card"><div class="card__header"><div><h3>発行済み証明書</h3><p>Developer IDに結び付いた署名証明書です。</p></div></div>
-          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>証明書</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => `<tr><td><code>${escapeHtml(item.id)}</code></td><td>${statusBadge(item.status)}</td><td>${formatDate(item.certificate?.content?.not_after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>公開鍵とMPKGからすぐに発行できます。</p></div>`}
+        <section class="card"><div class="card__header"><div><h3>登録済み証明書</h3><p>Developer IDに結び付いた署名証明書です。</p></div></div>
+          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>証明書</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => `<tr><td><code>${escapeHtml(item.id)}</code></td><td>${statusBadge(item.status)}</td><td>${formatDate(item.certificate?.content?.not_after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>msignでRoot直署名されたDeveloper Certificateを登録してください。</p></div>`}
         </section>
-        <form class="card" id="certificate-request-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>証明書を発行</h3><p>公開鍵とMPKG manifestを検証して即時発行します。管理者審査はありません。</p></div></div><div class="card__body form">
-          <label class="field"><span>公開鍵（Base64）</span><textarea class="textarea" name="subject_public_key" required></textarea><small>32 byteのEd25519公開鍵をBase64で入力してください。</small></label>
-          <label class="field mpkg-picker"><span>MPKG</span><input class="input input--file" type="file" accept=".mpkg,application/gzip" data-mpkg-input required><small>端末内だけでmanifest.tomlを読みます。.mpkg本体はサーバーへ送信しません。</small></label>
-          <div class="manifest-result" data-mpkg-result hidden></div>
-          <label class="field"><span>Package IDスコープ</span><input class="input" name="package_id_scopes" placeholder="MPKGから自動入力" required readonly><small>manifest.tomlのpackage.idを使用します。</small></label>
-          <label class="field"><span>Capability</span><textarea class="textarea textarea--compact" name="allowed_capabilities" placeholder="MPKGから自動入力" readonly></textarea><small>すべてのbinary.requiresを重複なしで使用します。</small></label>
+        <form class="card" id="certificate-register-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>証明書を登録</h3><p>Root秘密鍵はCloudへ置きません。msignでオフライン発行したMCER v1 Certificateを登録します。</p></div></div><div class="card__body form">
+          <label class="field"><span>Certificate Developer ID</span><input class="input" value="${escapeHtml(developer.certificate_developer_id || "")}" readonly><small><code>msign certificate issue --developer-id ${escapeHtml(developer.certificate_developer_id || "")}</code>へ指定するIDです。</small></label>
+          <label class="field"><span>Developer Certificate</span><input class="input input--file" type="file" accept=".cert,application/octet-stream" name="certificate_file" required><small><code>msign certificate issue</code>で生成したdeveloper.certを選択してください。Developer秘密鍵は送信しません。</small></label>
           <span class="field-error" data-error hidden></span>
-        </div><div class="card__footer"><button class="button button--primary" type="submit" ${developer.verification_status !== "verified" ? "disabled title=\"Developerの確認完了後に発行できます\"" : ""}>証明書を発行</button></div></form>
+        </div><div class="card__footer"><button class="button button--primary" type="submit" ${developer.verification_status !== "verified" ? "disabled title=\"Developerの確認完了後に登録できます\"" : ""}>証明書を登録</button></div></form>
       </div></section>`);
   } catch (error) {
     if (requestId !== detailRequestId) return;
@@ -412,10 +409,6 @@ function formValues(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
-function commaList(value) {
-  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
-}
-
 async function submitForm(form, work) {
   const button = form.querySelector('button[type="submit"]');
   const errorElement = form.querySelector("[data-error]");
@@ -463,28 +456,6 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-document.addEventListener("change", async (event) => {
-  const input = event.target.closest("[data-mpkg-input]");
-  if (!input) return;
-  const form = input.closest("form");
-  const resultElement = form.querySelector("[data-mpkg-result]");
-  const file = input.files?.[0];
-  if (!file) return;
-  resultElement.hidden = false;
-  resultElement.className = "manifest-result manifest-result--loading";
-  resultElement.textContent = "manifest.tomlを端末内で解析しています…";
-  try {
-    const manifest = await globalThis.MochiMpkgManifest.inspectMpkg(file);
-    form.elements.package_id_scopes.value = manifest.packageId;
-    form.elements.allowed_capabilities.value = manifest.capabilities.join(", ");
-    resultElement.className = "manifest-result manifest-result--success";
-    resultElement.innerHTML = `<strong>${escapeHtml(manifest.packageId)}</strong><span>${manifest.binaryCount} binary · ${manifest.capabilities.length} capabilities</span>`;
-  } catch (error) {
-    resultElement.className = "manifest-result manifest-result--error";
-    resultElement.textContent = error.message || ".mpkgを解析できませんでした。";
-  }
-});
-
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
@@ -517,13 +488,16 @@ document.addEventListener("submit", async (event) => {
       await renderDeveloperDetail(developerId);
     });
   }
-  if (form.id === "certificate-request-form") {
+  if (form.id === "certificate-register-form") {
     await submitForm(form, async () => {
-      const values = formValues(form);
       const developerId = form.dataset.developerId;
-      const payload = { signature_algorithm: "ed25519", subject_public_key: values.subject_public_key.trim(), package_id_scopes: commaList(values.package_id_scopes), allowed_capabilities: commaList(values.allowed_capabilities) };
-      await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/issue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      showToast("Certificateを発行しました");
+      const file = form.elements.certificate_file.files?.[0];
+      if (!file || file.size === 0 || file.size > 1024 * 1024) throw new Error("1 MiB以下のdeveloper.certを選択してください。");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ certificate: btoa(binary) }) });
+      showToast("Certificateを登録しました");
       await renderDeveloperDetail(developerId);
     });
   }

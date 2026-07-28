@@ -533,7 +533,7 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         .get_async("/v1/developer-creation-requests", proxy_route)
         .post_async("/v1/developer-creation-requests", proxy_route)
         .post_async(
-            "/v1/developers/:developer_id/certificates/issue",
+            "/v1/developers/:developer_id/certificates/register",
             proxy_route,
         )
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
@@ -596,7 +596,7 @@ mod tests {
         let source = include_str!("lib.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         let app = include_str!("../public/assets/app.js");
-        assert!(production.contains("/v1/developers/:developer_id/certificates/issue"));
+        assert!(production.contains("/v1/developers/:developer_id/certificates/register"));
         assert!(production.contains("(\"certificates\", \"revoke\")"));
         assert!(production.contains("/v1/admin/certificates/{resource_id}/revoke"));
         assert!(!production.contains("/v1/admin/certificate-requests"));
@@ -604,9 +604,8 @@ mod tests {
         assert!(valid_revocation_reason_code("key_compromise"));
         assert!(valid_revocation_reason_code("administrative"));
         assert!(!valid_revocation_reason_code("../revoke"));
-        assert!(app.contains("data-mpkg-input required"));
-        assert!(app.contains("name=\"package_id_scopes\"") && app.contains("required readonly"));
-        assert!(app.contains("Certificateを発行しました"));
+        assert!(app.contains("name=\"certificate_file\" required"));
+        assert!(app.contains("Certificateを登録しました"));
         assert!(!app.contains("certificate-requests"));
     }
 
