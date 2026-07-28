@@ -1,56 +1,38 @@
-# mochiOS Console
+# mochiOS Developer Console
 
-`console.mochios.org`で提供する開発者向けポータルです。Rustと`workers-rs`で
-実装したBFF、Cloudflare Workers Static Assets、D1セッションで構成します。
+`console.mochios.org`でDeveloper、Member、Developer Certificate、App Store審査を管理するRust／`workers-rs`製BFFと日本語フロントエンドです。Cloudflare Workers Static AssetsとD1のHttpOnly sessionを使用します。
 
-ConsoleはDeveloper、Developer Member、追加Developer申請、Developer
-Certificate登録を操作します。CertificateはmochiOSの`msign`でRoot直署名したMCER v1を
-オフライン発行し、Consoleからファイルとして登録します。ConsoleとDeveloperCAは
-Certificateを発行しません。
+## Developer Certificate
 
-allowlistへ登録された担当者は、Developer確認、追加作成申請、Certificate失効、
-検証済みApp Store Releaseをブラウザーから審査できます。DeveloperCAの秘密鍵、
-管理token、Accountsのセッショントークンをブラウザーへ渡しません。
-Certificateの発行審査・承認・却下操作はありません。管理者がCertificateに対して行う
-操作は、固定reason codeと説明を伴う失効だけです。
-
-## 構成
+devkitが生成するのは次の2ファイルです。
 
 ```text
-ブラウザー
-  ├─ AccountsでGitHub OAuth
-  └─ Console Worker（HttpOnlyセッション）
-        ├─ Accounts Service Binding
-        ├─ DeveloperCA Service Binding
-        ├─ DeveloperCA管理BFF（審査担当者のみ）
-        ├─ AppStore Service Binding（審査担当者のみ）
-        ├─ D1（Consoleセッション）
-        └─ Static Assets（日本語UI）
+application.key  # Base64 Ed25519 32-byte seed。端末外へ送らない
+application.pub  # Base64 Ed25519 32-byte公開鍵
 ```
 
-AccountsからConsoleへのログイン引き渡しには、120秒で失効し一度だけ交換できる
-認可コードを使用します。AccountsのCookieへ親ドメインは設定しません。
+Consoleでは`application.pub`とunsigned `.mpkg`を選びます。ブラウザがMPKG v1の32-byte headerと無圧縮ustarを検証し、`manifest.toml`からPackage IDと全`[[binary]].requires`の和集合を抽出します。Package ID、Capability、Subject Key IDは読み取り専用です。
+
+Workerへ送るのは公開鍵と抽出済みmetadataだけです。`.key`とMPKG bytesは送信しません。Developer CAがOnline Intermediateで発行したraw MCERを`developer.cert`としてダウンロードします。Certificateの人手審査はなく、管理者は失効だけを行います。
 
 ## ローカル検証
 
 ```powershell
-cargo test --offline
-cargo clippy --offline --all-targets -- -D warnings
+node --check public/assets/mpkg-manifest.js
+node --check public/assets/app.js
+node tests/mpkg-manifest.test.cjs
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
 npx wrangler d1 migrations apply mochios-console --local
 npx wrangler deploy --dry-run
 ```
 
-`.dev.vars`へ次のSecretを設定します。
+`.dev.vars`:
 
 ```text
-CONSOLE_SERVICE_TOKEN=<Accountsとの内部API用ランダム値>
-DEVELOPER_CA_TOKEN_SIGNING_KEY=<DeveloperCA短期token用base64 Ed25519 32-byte seed>
-APPSTORE_ADMIN_TOKEN=<AppStore APIのADMIN_TOKENと同じ値>
+CONSOLE_SERVICE_TOKEN=<Accounts内部API token>
+DEVELOPER_CA_TOKEN_SIGNING_KEY=<Base64 Ed25519 32-byte seed>
+APPSTORE_ADMIN_TOKEN=<AppStore API ADMIN_TOKENと同じ値>
 ```
 
-署名鍵と管理tokenはConsole Worker内だけで使用します。HTML、JavaScript、APIレスポンス
-には含めません。DeveloperCA tokenは60秒で失効し、操作ごとに新しい`jti`を持ちます。
-審査担当者はConsole D1の`developer_ca_reviewers`と
-`app_store_reviewers`で責務ごとに明示的に許可します。
-
-本番設定と手順は[docs/deployment.md](docs/deployment.md)を参照してください。
+構成は[docs/architecture.md](docs/architecture.md)、セキュリティ境界は[docs/security.md](docs/security.md)、一般開発者の公開手順は[docs/developer-publish-flow.md](docs/developer-publish-flow.md)を参照してください。

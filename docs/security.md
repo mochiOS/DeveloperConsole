@@ -1,17 +1,17 @@
 # セキュリティ
 
-- Console sessionと認証stateはSecure、HttpOnly、SameSite=Laxの`__Host-` Cookieです。
-- Accountsのsession Cookieを`.mochios.org`全体へ共有しません。
-- 認可コードはハッシュ保存し、120秒で失効し、一回の交換で消費済みになります。
-- 変更系BFF APIは`Origin`を`CONSOLE_BASE_URL`と照合します。
-- JSONリクエストは64 KiBへ制限します。
-- AccountsとDeveloperCAの呼び出しにはService Bindingを使用します。
-- `CONSOLE_SERVICE_TOKEN`、署名鍵、session token、認可コードをログへ出力しません。
-- Root秘密鍵とDeveloper subject秘密鍵をConsoleへ設定・送信しません。ConsoleはDeveloperCA専用Ed25519鍵で最大60秒のtokenだけを署名します。
-- DeveloperCA管理APIはConsole session、active Account、D1 reviewer allowlist、同一Originをすべて確認します。
-- Certificate登録ではMCER v1だけを受け付け、サイズを制限します。DeveloperCAはRoot直署名、Developer状態、member role、scope、Capabilityを再検証します。
-- Certificate管理BFFはissue/rejectや任意pathを公開せず、固定reason code付きrevokeだけを転送します。
-- AppStoreの`ADMIN_TOKEN`はConsole Worker Secretとしてのみ保持し、ブラウザーへ返しません。
-- App Store審査APIはConsole session、active Account、D1 reviewer allowlist、同一Originをすべて確認します。
-- ブラウザーから任意のvalidation reportは受理せず、Rust reviewerの検証結果だけを審査対象にします。
-- Content Security Policyで実行元、接続先、フレーム埋め込みを制限します。
+- sessionとOAuth stateはSecure、HttpOnly、SameSite=Laxの`__Host-` Cookie
+- Accounts Cookieを親domainへ共有しない
+- 変更APIの`Origin`を`CONSOLE_BASE_URL`へ完全一致
+- BFF JSON bodyは64 KiB、上流応答は1 MiBへ制限
+- Accounts、Developer CA、AppStoreはService Bindingで接続
+- delegation tokenは60秒、固定issuer/audience/role/actor、操作ごとに一意jti
+- Developer秘密鍵、Offline Root秘密鍵、MPKG bytesを送信・保存・ログ出力しない
+- `.key`、4 KiB超の公開鍵file、不正Base64／hex、32-byte以外を拒否
+- unsigned MPKGは128 MiB、manifestは1 MiB、entryは10,000件を上限にブラウザ解析
+- Package ID、Capability、Subject Key IDはreadonlyで、任意scope入力UIを持たない
+- Developer CAの管理BFFは確認、追加申請、失効だけ。Certificate承認APIはない
+- AppStoreの`ADMIN_TOKEN`をブラウザへ返さない
+- CSPでscript、connect、frameの実行元を制限
+
+ブラウザで算出したSubject Key IDやmanifest情報は利便性表示であり、Developer CAとAppStore Reviewerが共有crateで再検証します。
