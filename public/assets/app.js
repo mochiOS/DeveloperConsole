@@ -76,11 +76,6 @@ function certificateIssuePayload(draft) {
   };
 }
 
-async function certificateIdempotencyKey(developerId, payload) {
-  const canonical = JSON.stringify({ developer_id: developerId, ...payload });
-  return `cert-${await sha256Hex(new TextEncoder().encode(canonical))}`;
-}
-
 function downloadCertificate(encoded) {
   if (typeof encoded !== "string" || encoded.length > 2 * 1024 * 1024) throw new Error("Developer CAから不正なCertificateが返されました。");
   let bytes;
@@ -107,7 +102,12 @@ async function prepareCertificateDraft(form) {
   if (mpkgFile.size === 0 || mpkgFile.size > MochiMpkg.limits.MAX_MPKG_BYTES) throw new Error("MPKGのsizeが上限を超えています。");
   const [publicKey, mpkgBytes] = await Promise.all([readPublicKey(publicKeyFile), mpkgFile.arrayBuffer()]);
   const manifest = MochiMpkg.extractManifest(mpkgBytes);
-  const draft = { ...publicKey, packageId: manifest.packageId, capabilities: manifest.capabilities };
+  const draft = {
+    ...publicKey,
+    packageId: manifest.packageId,
+    capabilities: manifest.capabilities,
+    idempotencyKey: `cert-${crypto.randomUUID()}`,
+  };
   certificateDrafts.set(form, draft);
   form.elements.package_id.value = draft.packageId;
   form.elements.subject_key_id.value = draft.subjectKeyId;
@@ -587,8 +587,7 @@ document.addEventListener("submit", async (event) => {
       const developerId = form.dataset.developerId;
       const draft = certificateDrafts.get(form) || await prepareCertificateDraft(form);
       const payload = certificateIssuePayload(draft);
-      const idempotencyKey = await certificateIdempotencyKey(developerId, payload);
-      const result = await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/issue`, { method: "POST", headers: { "Content-Type": "application/json", "X-Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload) });
+      const result = await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/issue`, { method: "POST", headers: { "Content-Type": "application/json", "X-Idempotency-Key": draft.idempotencyKey }, body: JSON.stringify(payload) });
       downloadCertificate(result.certificate);
       showToast("developer.certを発行しました", "ダウンロードしたCertificateをapplication.keyと一緒に保管してください。");
       await renderDeveloperDetail(developerId);

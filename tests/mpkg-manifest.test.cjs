@@ -108,8 +108,9 @@ assert.throws(
   assert.match(app, /name="capabilities" readonly/);
   assert.match(app, /certificateIssuePayload\(draft\)/);
   assert.doesNotMatch(app, /certificate_file/);
-  const payloadFunction = app.slice(app.indexOf("function certificateIssuePayload"), app.indexOf("async function certificateIdempotencyKey"));
+  const payloadFunction = app.slice(app.indexOf("function certificateIssuePayload"), app.indexOf("function downloadCertificate"));
   assert.doesNotMatch(payloadFunction, /mpkg|manifestText|private/i);
+  assert.match(app, /idempotencyKey: `cert-\$\{crypto\.randomUUID\(\)\}`/);
 }
 
 console.log("MPKG manifest and public-key tests passed");
