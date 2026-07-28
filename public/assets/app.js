@@ -76,31 +76,40 @@ function showToast(title, message = "", type = "success") {
   window.setTimeout(() => toast.remove(), 4500);
 }
 
-function topbar() {
-  return `<header class="topbar"><div class="topbar__inner">
-    <a class="brand" href="#overview" aria-label="mochiOS Console">
-      <span>mochiOS <span class="brand__product">Console</span></span>
+function header() {
+  return `<header class="site-header"><div class="site-header__inner">
+    <a class="brand" href="#overview" aria-label="mochiOS ID Developer">
+      <span>mochiOS <span class="brand__product">ID</span></span><span class="brand__context">Developer</span>
     </a>
-    ${account ? `<button class="account-menu" type="button" data-action="logout" title="ログアウト"><span>${escapeHtml(account.name)}</span><span class="account-avatar">${escapeHtml(initials(account.name))}</span></button>` : ""}
+    ${account ? `<button class="header-user" type="button" data-action="logout" title="ログアウト"><span>${escapeHtml(account.name)}</span><span class="header-user__avatar">${escapeHtml(initials(account.name))}</span></button>` : ""}
   </div></header>`;
 }
 
 function footer() {
-  return `<footer class="footer">Copyright © 2026 mochiOS team · Developer Console</footer>`;
+  return `<footer class="site-footer"><div class="site-footer__inner">
+    <span>Copyright © 2026 mochiOS team</span>
+    <nav class="footer-links" aria-label="フッター">
+      <a href="https://policy.mochios.org/terms/" target="_blank" rel="noopener noreferrer">利用規約</a>
+      <a href="https://policy.mochios.org/privacy/" target="_blank" rel="noopener noreferrer">プライバシー</a>
+      <a href="https://status.mochios.org" target="_blank" rel="noopener noreferrer">サービス状態</a>
+    </nav>
+  </div></footer>`;
 }
 
 function renderLogin() {
-  document.title = "mochiOS Console";
-  app.innerHTML = `<div class="login">${topbar()}<main class="login-main">
-    <section>
-      <h1>Easy to develop</h1>
-      <p class="login-lead">Developerアカウント、チーム、署名証明書を安全に管理します。認証はmochiOS IDで行い、秘密鍵はお使いの端末から送信されません。</p>
-      <div class="login-features"><span>Developerアカウントの管理</span><span>メンバーと権限管理</span><span>Certificate申請</span></div>
+  document.title = "Developer | mochiOS ID";
+  app.innerHTML = `<div class="login-page">${header()}<main class="login-main">
+    <section class="login-copy">
+      <p class="login-kicker">mochiOS Developer</p>
+      <h1 class="login-title">つくる人のための<br>ワークスペース</h1>
+      <p class="login-lead">Developerアカウント、メンバー、署名証明書を、mochiOS IDと同じ場所から安全に管理できます。</p>
+      <div class="login-features" aria-label="主な機能"><article><strong>Developer</strong><span>公開者と署名主体を管理します。</span></article><article><strong>メンバー</strong><span>役割ごとにアクセスを管理します。</span></article><article><strong>Certificate</strong><span>秘密鍵を端末から出さずに発行します。</span></article></div>
     </section>
-    <section class="login-card" aria-labelledby="login-title">
-      <h2 id="login-title">ログイン</h2>
-      <p>mochiOS IDを使用します。ConsoleへGitHubのパスワードやアクセストークンが共有されることはありません。</p>
+    <section class="login-panel" aria-labelledby="login-title">
+      <h2 id="login-title">mochiOS IDでログイン</h2>
+      <p>Developer機能はmochiOS IDに接続されています。ログイン後、参加中のDeveloperだけが表示されます。</p>
       <a class="button button--primary button--wide" href="/v1/auth/start">${icon("person")}mochiOS IDで続ける</a>
+      <p class="login-note">GitHubのパスワードやDeveloper秘密鍵がConsoleへ共有されることはありません。</p>
     </section>
   </main>${footer()}</div>`;
 }
@@ -114,21 +123,21 @@ function activeRoute() {
   return "overview";
 }
 
-function sidebar() {
+function navigation() {
   const active = activeRoute();
-  return `<aside class="sidebar"><p class="sidebar__label">WORKSPACE</p><nav aria-label="Consoleナビゲーション">
+  return `<aside class="sidebar"><p>DEVELOPER</p><nav aria-label="Developerナビゲーション">
     <a href="#overview" ${active === "overview" ? 'aria-current="page"' : ""}>${icon("dashboard")}概要</a>
     <a href="#developers" ${active === "developers" ? 'aria-current="page"' : ""}>${icon("badge")}Developers</a>
     <a href="#requests" ${active === "requests" ? 'aria-current="page"' : ""}>${icon("description")}追加申請</a>
     ${developerCaReviewer ? `<a href="#developer-reviews" ${active === "developer-reviews" ? 'aria-current="page"' : ""}>${icon("security")}Developer管理</a>` : ""}
     ${appStoreReviewer ? `<a href="#reviews" ${active === "reviews" ? 'aria-current="page"' : ""}>${icon("fact_check")}App審査</a>` : ""}
-  </nav><div class="sidebar__account"><p class="sidebar__label">ACCOUNT</p><nav>
+  </nav><div class="sidebar__account"><p>MOCHIOS ID</p><nav>
     <a href="https://accounts.mochios.org/#account" target="_blank" rel="noopener noreferrer">${icon("settings")}Account設定</a>
   </nav></div></aside>`;
 }
 
 function shell(content) {
-  return `${topbar()}<div class="workspace">${sidebar()}<main class="main">${content}</main></div>${footer()}`;
+  return `${header()}<main class="page"><div class="account-layout">${navigation()}<section class="content">${content}</section></div></main>${footer()}`;
 }
 
 function heading(kicker, title, description, action = "") {
@@ -160,8 +169,8 @@ function renderOverview() {
   const pending = creationRequests.filter((request) => request.status === "pending").length;
   const verified = developers.filter((developer) => developer.verification_status === "verified").length;
   const recent = developers.slice(0, 4);
-  document.title = "概要 | mochiOS Console";
-  app.innerHTML = shell(`${heading("mochiOS Console", `こんにちは、${account.name}`, "Developerアカウントと証明書の状態を確認できます。")}
+  document.title = "概要 | mochiOS ID Developer";
+  app.innerHTML = shell(`${heading("mochiOS Developer", `こんにちは、${account.name}`, "Developerアカウントと証明書の状態を確認できます。")}
     <section class="metrics" aria-label="概要">
       <article class="metric"><span>参加中のDeveloperアカウント</span><strong>${developers.length}</strong></article>
       <article class="metric"><span>確認済みDeveloperアカウント</span><strong>${verified}</strong></article>
@@ -180,7 +189,7 @@ function approvedRequestOptions() {
 }
 
 function renderDevelopers() {
-  document.title = "Developers | mochiOS Console";
+  document.title = "Developers | mochiOS ID Developer";
   const action = `<button class="button button--primary" type="button" data-action="toggle-create">${icon("add")}Developerを作成</button>`;
   app.innerHTML = shell(`${heading("WORKSPACE", "Developers", "所属するDeveloperと審査状態を管理します。", action)}
     <section class="card" id="create-developer-card" ${developers.length ? "hidden" : ""}>
@@ -198,7 +207,7 @@ function renderDevelopers() {
 }
 
 function renderRequests() {
-  document.title = "追加申請 | mochiOS Console";
+  document.title = "追加申請 | mochiOS ID Developer";
   app.innerHTML = shell(`${heading("WORKSPACE", "追加Developerアカウント申請", "2つ目以降のDeveloperアカウントを作成するための承認を申請します。")}
     <section class="grid">
       <form class="card" id="creation-request-form"><div class="card__header"><div><h2>新しい申請</h2><p>用途と必要性を記載してください。</p></div></div><div class="card__body form">
@@ -231,7 +240,7 @@ async function renderDeveloperDetail(developerId) {
     const developer = developerResult.developer;
     const members = memberResult.members || [];
     const certificates = certificateResult.certificates || [];
-    document.title = `${developer.display_name} | mochiOS Console`;
+    document.title = `${developer.display_name} | mochiOS ID Developer`;
     app.innerHTML = shell(`${heading("DEVELOPER", developer.display_name, "Developerアカウントの情報、メンバー、署名証明書を管理します。", `<a class="button button--secondary" href="#developers">一覧へ戻る</a>`)}
       <section class="card"><div class="card__header"><div><h2>基本情報</h2><p>署名主体として使用されるDeveloper情報です。</p></div><span class="badges">${statusBadge(developer.status)}${statusBadge(developer.verification_status)}</span></div>
         <div class="card__body"><dl class="detail-list"><div><dt>Developer ID</dt><dd><code>${escapeHtml(developer.id)}</code></dd></div><div><dt>種類</dt><dd>${statusBadge(developer.developer_type)}</dd></div><div><dt>作成日</dt><dd>${formatDate(developer.created_at)}</dd></div></dl></div>
@@ -270,7 +279,7 @@ async function renderReviews() {
   try {
     const result = await api("/v1/app-store/reviews");
     const releases = result.releases || [];
-    document.title = "App審査 | mochiOS Console";
+    document.title = "App審査 | mochiOS ID Developer";
     app.innerHTML = shell(`${heading("APP STORE", "App審査", "Rust審査ツールによる形式・hash・署名検証を通過したReleaseだけを表示します。")}
       <section class="metrics" aria-label="App審査概要">
         <article class="metric"><span>審査待ち</span><strong>${releases.length}</strong></article>
@@ -355,7 +364,7 @@ async function renderDeveloperReviews() {
     const developerItems = queue.developers || [];
     const creationItems = queue.developer_creation_requests || [];
     const certificateItems = queue.certificates || [];
-    document.title = "Developer管理 | mochiOS Console";
+    document.title = "Developer管理 | mochiOS ID Developer";
     app.innerHTML = shell(`${heading("DEVELOPER CA", "Developer管理", "CertificateはDeveloperへ自動発行されます。管理者は必要な場合だけ失効します。")}
       <section class="metrics" aria-label="Developer審査概要">
         <article class="metric"><span>Developer確認</span><strong>${developerItems.length}</strong></article>
