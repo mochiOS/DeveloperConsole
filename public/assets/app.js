@@ -247,6 +247,9 @@ async function renderDeveloperDetail(developerId) {
     const members = memberResult.members || [];
     const certificates = certificateResult.certificates || [];
     const developerApps = appStoreResult.apps || [];
+    const releaseResults = await Promise.all(developerApps.map((item) => api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(item.bundle_id)}/releases`).catch(() => ({ releases: [] }))));
+    const developerReleases = releaseResults.flatMap((result) => result.releases || []);
+    if (requestId !== detailRequestId) return;
     const canPublish = members.some((member) => member.account_id === account.id && member.status === "active" && ["owner", "admin", "developer"].includes(member.role));
     document.title = `${developer.display_name} | mochiOS ID Developer`;
     app.innerHTML = shell(`${heading("DEVELOPER", developer.display_name, "Developerアカウントの情報、メンバー、署名証明書を管理します。", `<a class="button button--secondary" href="#developers">一覧へ戻る</a>`)}
@@ -268,6 +271,7 @@ kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manif
       ${canPublish ? `<section class="section"><div class="section-title"><h2>App Store</h2></div>
         <section class="card"><div class="card__header"><div><h3>登録済みアプリ</h3><p>MPKG本体は保存せず、GitHub Releases上の固定assetを登録します。</p></div></div>
           ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Package ID</th><th>公開状態</th></tr></thead><tbody>${developerApps.map((item) => `<tr><td>${escapeHtml(item.display_name)}</td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
+          ${developerReleases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Release ID</th><th>Version</th><th>検証</th><th>審査</th><th>公開</th></tr></thead><tbody>${developerReleases.map((item) => `<tr><td><code>${escapeHtml(item.release_id)}</code><br><small>${escapeHtml(item.bundle_id)}</small></td><td>${escapeHtml(item.version)}</td><td>${statusBadge(item.validation_status)}</td><td>${statusBadge(item.review_status)}</td><td>${statusBadge(item.publish_status)}</td></tr>`).join("")}</tbody></table></div>` : ""}
         </section>
         <div class="grid">
           <form class="card" id="app-store-reserve-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>1. Package IDを予約</h3></div></div><div class="card__body form"><label class="field"><span>Package ID</span><input class="input" name="bundle_id" placeholder="com.example.testapp" required></label><label class="field"><span>アプリ名</span><input class="input" name="app_name" required></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">予約</button></div></form>
