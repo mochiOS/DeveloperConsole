@@ -541,7 +541,9 @@ async fn approve_review(req: Request, ctx: RouteContext<()>) -> Result<Response>
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RejectReviewInput {
-    message: String,
+    reason_code: String,
+    #[serde(default)]
+    note: String,
 }
 
 async fn reject_review(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -572,16 +574,27 @@ async fn reject_review(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         Ok(input) => input,
         Err(_) => return error("JSON_INVALID", "JSONリクエストが無効です。", 400),
     };
-    let message = input.message.trim();
-    if message.is_empty() || message.len() > 2000 {
+    let note = input.note.trim();
+    if !matches!(
+        input.reason_code.as_str(),
+        "metadata_incorrect"
+            | "misleading_description"
+            | "malicious_behavior"
+            | "policy_violation"
+            | "duplicate_application"
+            | "broken_application"
+            | "other"
+    ) || note.chars().count() > 2000
+    {
         return error(
             "VALIDATION_ERROR",
-            "却下理由は1〜2000文字で入力してください。",
+            "却下理由を選択し、補足は2000文字以内で入力してください。",
             422,
         );
     }
     let body = serde_json::to_vec(&RejectReviewInput {
-        message: message.to_owned(),
+        reason_code: input.reason_code,
+        note: note.to_owned(),
     })?;
     let response = upstream::app_store(
         &ctx.env,

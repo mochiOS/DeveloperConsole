@@ -333,15 +333,21 @@ async function renderReviewDetail(releaseId) {
           <div><dt>Release tag</dt><dd><code>${escapeHtml(release.github_release_tag)}</code></dd></div>
           <div><dt>Asset</dt><dd>${escapeHtml(release.asset_name)} · ${formatBytes(release.file_size)}</dd></div>
           <div><dt>最低mochiOS</dt><dd>${escapeHtml(release.minimum_mochios_version)}</dd></div>
-          <div><dt>Certificate</dt><dd><code>${escapeHtml(release.developer_certificate_id)}</code></dd></div>
-          <div><dt>Package SHA-256</dt><dd><code class="hash-value">${escapeHtml(release.sha256)}</code></dd></div>
+          <div><dt>Developer</dt><dd>${escapeHtml(release.developer_display_name || "—")}<br><code>${escapeHtml(release.registered_by)}</code></dd></div>
+          <div><dt>Certificate serial</dt><dd><code>${escapeHtml(release.developer_certificate_serial)}</code></dd></div>
+          <div><dt>Subject Key ID</dt><dd><code class="hash-value">${escapeHtml(release.developer_certificate_subject_key_id)}</code></dd></div>
+          <div><dt>Asset SHA-256</dt><dd><code class="hash-value">${escapeHtml(release.sha256)}</code></dd></div>
+          <div><dt>Package digest</dt><dd><code class="hash-value">${escapeHtml(release.package_digest)}</code></dd></div>
           <div><dt>Manifest SHA-256</dt><dd><code class="hash-value">${escapeHtml(release.manifest_hash)}</code></dd></div>
+          <div><dt>Capabilities</dt><dd class="pre-wrap">${escapeHtml((JSON.parse(release.capabilities_json || "[]")).join("\n") || "なし")}</dd></div>
+          <div><dt>Payload</dt><dd class="pre-wrap">${escapeHtml((JSON.parse(release.payloads_json || "[]")).map((item) => `${item.install_path} · ${formatBytes(item.size)} · ${item.mode}`).join("\n") || "—")}</dd></div>
+          <div><dt>検証</dt><dd>${escapeHtml(release.reviewer_version)} · ${formatDate(release.validated_at)}</dd></div>
           <div><dt>変更内容</dt><dd class="pre-wrap">${escapeHtml(release.changelog || "—")}</dd></div>
         </dl></div>
       </section>
       ${actionable ? `<section class="section grid review-actions">
         <form class="card" id="review-approve-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>承認して公開</h3><p>承認するとストアへ即時公開されます。</p></div></div><div class="card__body form"><label class="confirm-field"><input type="checkbox" name="confirmed" required><span>検証値とアプリ内容を確認しました</span></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">承認して公開</button></div></form>
-        <form class="card" id="review-reject-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>却下</h3><p>開発者が判断できる具体的な理由を記載します。</p></div></div><div class="card__body form"><label class="field"><span>却下理由</span><textarea class="textarea" name="message" minlength="1" maxlength="2000" required></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--danger" type="submit">Releaseを却下</button></div></form>
+        <form class="card" id="review-reject-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>却下</h3><p>固定理由を選び、必要なら補足します。</p></div></div><div class="card__body form"><label class="field"><span>却下理由</span><select class="input" name="reason_code" required><option value="">選択してください</option><option value="metadata_incorrect">Metadataが不正確</option><option value="misleading_description">説明が誤解を招く</option><option value="malicious_behavior">悪意ある動作</option><option value="policy_violation">ポリシー違反</option><option value="duplicate_application">重複アプリ</option><option value="broken_application">動作不能</option><option value="other">その他</option></select></label><label class="field"><span>補足（任意）</span><textarea class="textarea" name="note" maxlength="2000"></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--danger" type="submit">Releaseを却下</button></div></form>
       </section>` : `<section class="section card empty">${icon("fact_check")}<h3>このReleaseは操作できません</h3><p>検証済み・審査待ち・下書きのReleaseだけを承認または却下できます。</p></section>`}`);
   } catch (error) {
     app.innerHTML = shell(`${heading("APP STORE", "Releaseを取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><a class="button button--secondary" href="#reviews">審査一覧へ戻る</a></p></div>`);
@@ -527,7 +533,7 @@ document.addEventListener("submit", async (event) => {
     await submitForm(form, async () => {
       const releaseId = form.dataset.releaseId;
       const values = formValues(form);
-      await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: values.message.trim() }) });
+      await api(`/v1/app-store/reviews/${encodeURIComponent(releaseId)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason_code: values.reason_code, note: values.note.trim() }) });
       showToast("Releaseを却下しました");
       window.location.hash = "#reviews";
     });
