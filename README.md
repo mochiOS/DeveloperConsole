@@ -1,6 +1,6 @@
 # mochiOS Developer Console
 
-`console.mochios.org`でDeveloper、Member、Developer確認、Certificate一覧・失効、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
+`console.mochios.org`でDeveloper、Member、Certificate一覧、セキュリティ停止、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
 
 一般Developer Certificate発行はKome CLIが担当します。Consoleは公開鍵、秘密鍵、MPKGを選択・アップロードする発行UIを持ちません。
 
@@ -9,7 +9,7 @@
 以降: kome sign
 ```
 
-CLI sessionの一覧・個別失効は[mochiOS ID](https://accounts.mochios.org/#sessions)へ移動して管理します。Certificateの人手発行審査はなく、管理者はDeveloper確認とCertificate失効だけを行います。
+CLI sessionの一覧・個別失効は[mochiOS ID](https://accounts.mochios.org/#sessions)へ移動して管理します。DeveloperとCertificateの事前審査はなく、管理者は問題発生時にDeveloper、Certificate、パッケージを停止または失効します。
 
 ```powershell
 node --check public/assets/app.js
