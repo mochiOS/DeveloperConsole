@@ -456,6 +456,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mochios-certificate"
+version = "0.1.0"
+source = "git+https://github.com/mochiOS/syscalls?rev=af217f5ca6a585110aabac813eb46dff8ccb7bfc#af217f5ca6a585110aabac813eb46dff8ccb7bfc"
+dependencies = [
+ "ed25519-dalek",
+ "sha2",
+]
+
+[[package]]
 name = "mochios-console"
 version = "0.1.0"
 dependencies = [
@@ -463,6 +472,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
  "js-sys",
+ "mochios-certificate",
  "mochios-developer-ca-auth-token",
  "serde",
  "serde_json",

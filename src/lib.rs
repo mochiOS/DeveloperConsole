@@ -214,6 +214,57 @@ fn valid_release_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+fn valid_developer_id(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+async fn app_store_developer_proxy(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let Some(account) = current_account(&req, &ctx.env).await? else {
+        return error("UNAUTHENTICATED", "ログインが必要です。", 401);
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let developer_id = ctx.param("developer_id").map(String::as_str).unwrap_or("");
+    if !valid_developer_id(developer_id) {
+        return error("DEVELOPER_ID_INVALID", "Developer IDが無効です。", 422);
+    }
+    let bundle_id = ctx.param("bundle_id").map(String::as_str);
+    if bundle_id.is_some_and(|value| !valid_package_id(value)) {
+        return error("PACKAGE_ID_INVALID", "Package IDが無効です。", 422);
+    }
+    let path = if req.path().ends_with("/bundle-ids") {
+        "/v1/bundle-ids".to_owned()
+    } else if let Some(bundle_id) = bundle_id {
+        if req.path().ends_with("/releases") {
+            format!("/v1/developer/apps/{bundle_id}/releases")
+        } else {
+            format!("/v1/developer/apps/{bundle_id}")
+        }
+    } else {
+        "/v1/developer/apps".to_owned()
+    };
+    let method = req.method();
+    let body = if matches!(method, Method::Post | Method::Patch | Method::Put) {
+        if req
+            .headers()
+            .get("Content-Length")?
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some_and(|length| length > MAX_JSON_BODY_BYTES)
+        {
+            return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+        }
+        let bytes = req.bytes().await?;
+        if bytes.len() > MAX_JSON_BODY_BYTES {
+            return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+        }
+        Some(bytes)
+    } else {
+        None
+    };
+    upstream::app_store_developer(&ctx.env, &account.id, developer_id, method, &path, body).await
+}
+
 async fn reviewer_account(
     req: &Request,
     env: &Env,
@@ -272,17 +323,7 @@ fn valid_review_resource_id(value: &str) -> bool {
 }
 
 fn valid_package_id(value: &str) -> bool {
-    value.len() <= 253
-        && value.split('.').count() >= 3
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part.len() <= 63
-                && !part.starts_with('-')
-                && !part.ends_with('-')
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
+    mochios_certificate::is_valid_package_id(value)
 }
 
 fn valid_revocation_reason_code(value: &str) -> bool {
@@ -647,6 +688,34 @@ async fn route(req: Request, env: Env) -> Result<Response> {
             developer_review_action,
         )
         .get_async("/v1/app-store/reviews", review_list)
+        .get_async(
+            "/v1/app-store/developers/:developer_id/bundle-ids",
+            app_store_developer_proxy,
+        )
+        .post_async(
+            "/v1/app-store/developers/:developer_id/bundle-ids",
+            app_store_developer_proxy,
+        )
+        .get_async(
+            "/v1/app-store/developers/:developer_id/apps",
+            app_store_developer_proxy,
+        )
+        .post_async(
+            "/v1/app-store/developers/:developer_id/apps",
+            app_store_developer_proxy,
+        )
+        .get_async(
+            "/v1/app-store/developers/:developer_id/apps/:bundle_id",
+            app_store_developer_proxy,
+        )
+        .get_async(
+            "/v1/app-store/developers/:developer_id/apps/:bundle_id/releases",
+            app_store_developer_proxy,
+        )
+        .post_async(
+            "/v1/app-store/developers/:developer_id/apps/:bundle_id/releases",
+            app_store_developer_proxy,
+        )
         .get_async("/v1/app-store/packages", package_list)
         .post_async("/v1/app-store/packages/:bundle_id/:action", package_action)
         .get_async("/v1/app-store/reviews/:release_id", review_detail)

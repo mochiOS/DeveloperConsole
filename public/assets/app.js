@@ -236,15 +236,18 @@ async function renderDeveloperDetail(developerId) {
   const requestId = ++detailRequestId;
   detailSkeleton();
   try {
-    const [developerResult, memberResult, certificateResult] = await Promise.all([
+    const [developerResult, memberResult, certificateResult, appStoreResult] = await Promise.all([
       api(`/v1/developers/${encodeURIComponent(developerId)}`),
       api(`/v1/developers/${encodeURIComponent(developerId)}/members`),
       api(`/v1/developers/${encodeURIComponent(developerId)}/certificates`),
+      api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps`).catch(() => ({ apps: [] })),
     ]);
     if (requestId !== detailRequestId) return;
     const developer = developerResult.developer;
     const members = memberResult.members || [];
     const certificates = certificateResult.certificates || [];
+    const developerApps = appStoreResult.apps || [];
+    const canPublish = members.some((member) => member.account_id === account.id && member.status === "active" && ["owner", "admin", "developer"].includes(member.role));
     document.title = `${developer.display_name} | mochiOS ID Developer`;
     app.innerHTML = shell(`${heading("DEVELOPER", developer.display_name, "Developerアカウントの情報、メンバー、署名証明書を管理します。", `<a class="button button--secondary" href="#developers">一覧へ戻る</a>`)}
       <section class="card"><div class="card__header"><div><h2>基本情報</h2><p>署名主体として使用されるDeveloper情報です。</p></div><span class="badges">${statusBadge(developer.status)}${statusBadge(developer.verification_status)}</span></div>
@@ -261,7 +264,17 @@ async function renderDeveloperDetail(developerId) {
         <section class="card"><div class="card__header"><div><h3>Kome CLIで署名</h3><p>公開鍵、秘密鍵、MPKGはブラウザへアップロードしません。</p></div></div><div class="card__body"><p>初回は次を実行してください。</p><pre><code>kome login
 kome keygen
 kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manifestからPackage IDとCapabilityを読み取り、必要なCertificateを取得します。</p><a class="button button--secondary" href="https://accounts.mochios.org/#sessions">CLIセッションを管理</a></div></section>
-      </div></section>`);
+      </div></section>
+      ${canPublish ? `<section class="section"><div class="section-title"><h2>App Store</h2></div>
+        <section class="card"><div class="card__header"><div><h3>登録済みアプリ</h3><p>MPKG本体は保存せず、GitHub Releases上の固定assetを登録します。</p></div></div>
+          ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Package ID</th><th>公開状態</th></tr></thead><tbody>${developerApps.map((item) => `<tr><td>${escapeHtml(item.display_name)}</td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
+        </section>
+        <div class="grid">
+          <form class="card" id="app-store-reserve-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>1. Package IDを予約</h3></div></div><div class="card__body form"><label class="field"><span>Package ID</span><input class="input" name="bundle_id" placeholder="com.example.testapp" required></label><label class="field"><span>アプリ名</span><input class="input" name="app_name" required></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">予約</button></div></form>
+          <form class="card" id="app-store-create-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>2. アプリ情報を作成</h3></div></div><div class="card__body form"><label class="field"><span>予約済みPackage ID</span><input class="input" name="bundle_id" required></label><label class="field"><span>表示名</span><input class="input" name="display_name" required></label><label class="field"><span>説明</span><textarea class="textarea" name="description" maxlength="4000"></textarea></label><div class="form-row"><label class="field"><span>種類</span><select class="select" name="kind"><option value="app">アプリ</option><option value="game">ゲーム</option></select></label><label class="field"><span>価格表示</span><input class="input" name="price_label" value="入手" required></label></div><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">アプリを作成</button></div></form>
+        </div>
+        <form class="card" id="app-store-release-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>3. GitHub Releaseを登録</h3><p>公開済みReleaseと完全一致する<code>.mpkg</code> assetを指定してください。</p></div></div><div class="card__body form"><div class="form-row"><label class="field"><span>Package ID</span><input class="input" name="bundle_id" required></label><label class="field"><span>Version</span><input class="input" name="version" placeholder="0.1.0" required></label></div><div class="form-row"><label class="field"><span>Repository</span><input class="input" name="repository" placeholder="owner/repository" required></label><label class="field"><span>Release tag</span><input class="input" name="release_tag" placeholder="v0.1.0" required></label></div><label class="field"><span>MPKG asset名</span><input class="input" name="asset" placeholder="TestApp.mpkg" required></label><div class="form-row"><label class="field"><span>Developer Certificate</span><select class="select" name="certificate_id" required><option value="">選択してください</option>${certificates.filter((item) => item.status === "issued" || item.status === "valid").map((item) => `<option value="${escapeHtml(item.certificate_id || item.id)}">serial ${escapeHtml(item.serial_number)} · ${escapeHtml(item.certificate_id || item.id)}</option>`).join("")}</select></label><label class="field"><span>最低mochiOS</span><input class="input" name="minimum_mochios_version" value="0.1.0" required></label></div><label class="field"><span>変更内容（任意）</span><textarea class="textarea" name="changelog" maxlength="4000"></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">Releaseを登録</button></div></form>
+      </section>` : ""}`);
   } catch (error) {
     if (requestId !== detailRequestId) return;
     app.innerHTML = shell(`${heading("DEVELOPER", "読み込めませんでした", error.message)}<div class="card empty">${icon("error")}<h3>Developer情報を取得できません</h3><p><a class="button button--secondary" href="#developers">一覧へ戻る</a></p></div>`);
@@ -518,6 +531,34 @@ document.addEventListener("submit", async (event) => {
       const developerId = form.dataset.developerId;
       await api(`/v1/developers/${encodeURIComponent(developerId)}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
       showToast("メンバーを追加しました");
+      await renderDeveloperDetail(developerId);
+    });
+  }
+  if (form.id === "app-store-reserve-form") {
+    await submitForm(form, async () => {
+      const values = formValues(form);
+      const developerId = form.dataset.developerId;
+      await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/bundle-ids`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      showToast("Package IDを予約しました");
+    });
+  }
+  if (form.id === "app-store-create-form") {
+    await submitForm(form, async () => {
+      const values = formValues(form);
+      const developerId = form.dataset.developerId;
+      await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      showToast("アプリ情報を作成しました");
+      await renderDeveloperDetail(developerId);
+    });
+  }
+  if (form.id === "app-store-release-form") {
+    await submitForm(form, async () => {
+      const values = formValues(form);
+      const developerId = form.dataset.developerId;
+      const bundleId = values.bundle_id;
+      delete values.bundle_id;
+      await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(bundleId)}/releases`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      showToast("GitHub Releaseを登録しました。Reviewer検証を実行してください");
       await renderDeveloperDetail(developerId);
     });
   }

@@ -250,3 +250,42 @@ pub async fn app_store(
     response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(response)
 }
+
+pub async fn app_store_developer(
+    env: &Env,
+    account_id: &str,
+    developer_id: &str,
+    method: Method,
+    path: &str,
+    body: Option<Vec<u8>>,
+) -> Result<Response> {
+    let headers = developer_ca_headers(env, account_id, false)?;
+    headers.set("X-Developer-ID", developer_id)?;
+    if body.is_some() {
+        headers.set("Content-Type", "application/json")?;
+    }
+    let mut init = RequestInit::new();
+    init.with_method(method).with_headers(headers);
+    if let Some(body) = body {
+        init.with_body(Some(js_sys::Uint8Array::from(body.as_slice()).into()));
+    }
+    let mut upstream = env
+        .service("APP_STORE")?
+        .fetch(format!("https://app-store.internal{path}"), Some(init))
+        .await?;
+    let status = upstream.status_code();
+    let content_type = upstream
+        .headers()
+        .get("Content-Type")?
+        .unwrap_or_else(|| "application/json; charset=utf-8".into());
+    let bytes = upstream.bytes().await?;
+    if bytes.len() > MAX_UPSTREAM_RESPONSE_BYTES {
+        return Err(worker::Error::RustError(
+            "App Store response exceeds the Console limit".into(),
+        ));
+    }
+    let mut response = Response::from_bytes(bytes)?.with_status(status);
+    response.headers_mut().set("Content-Type", &content_type)?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(response)
+}
