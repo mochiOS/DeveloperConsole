@@ -34,6 +34,9 @@ fn developer_ca_token(env: &Env, account_id: &str, admin: bool) -> Result<String
             "delegated_account".into()
         },
         act: Some("mochios-console".into()),
+        client_id: None,
+        scope: None,
+        session_id: None,
     };
     issue(&claims, &SigningKey::from_bytes(&seed))
         .map_err(|error| worker::Error::RustError(error.to_string()))

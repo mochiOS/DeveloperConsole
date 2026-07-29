@@ -7,7 +7,6 @@ let developerCaReviewer = false;
 let developers = [];
 let creationRequests = [];
 let detailRequestId = 0;
-const certificateDrafts = new WeakMap();
 
 const icon = (name) => `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
 
@@ -52,72 +51,6 @@ function githubDownloadUrl(value) {
   return null;
 }
 
-function bytesToHex(bytes) {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function sha256Hex(bytes) {
-  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
-}
-
-async function readPublicKey(file) {
-  if (!file || file.size === 0 || file.size > 4096) throw new Error("4 KiB以下のapplication.pubを選択してください。");
-  if (!file.name.toLowerCase().endsWith(".pub") || file.name.toLowerCase().endsWith(".key")) throw new Error("秘密鍵ではなくapplication.pubを選択してください。");
-  const text = (await file.text()).trim();
-  const { bytes, subjectPublicKey } = MochiMpkg.parsePublicKey(text);
-  return { subjectPublicKey, subjectKeyId: await sha256Hex(bytes) };
-}
-
-function certificateIssuePayload(draft) {
-  return {
-    subject_public_key: draft.subjectPublicKey,
-    package_id: draft.packageId,
-    capabilities: [...draft.capabilities],
-  };
-}
-
-function downloadCertificate(encoded) {
-  if (typeof encoded !== "string" || encoded.length > 2 * 1024 * 1024) throw new Error("Developer CAから不正なCertificateが返されました。");
-  let bytes;
-  try {
-    const binary = atob(encoded);
-    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  } catch {
-    throw new Error("Developer CAから不正なCertificateが返されました。");
-  }
-  if (!bytes.length) throw new Error("Developer CAから空のCertificateが返されました。");
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "developer.cert";
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-async function prepareCertificateDraft(form) {
-  const publicKeyFile = form.elements.public_key_file.files?.[0];
-  const mpkgFile = form.elements.mpkg_file.files?.[0];
-  if (!publicKeyFile || !mpkgFile) throw new Error("application.pubとunsigned .mpkgを選択してください。");
-  if (!mpkgFile.name.toLowerCase().endsWith(".mpkg")) throw new Error("legacy .pkgではなくunsigned .mpkgを選択してください。");
-  if (mpkgFile.size === 0 || mpkgFile.size > MochiMpkg.limits.MAX_MPKG_BYTES) throw new Error("MPKGのsizeが上限を超えています。");
-  const [publicKey, mpkgBytes] = await Promise.all([readPublicKey(publicKeyFile), mpkgFile.arrayBuffer()]);
-  const manifest = MochiMpkg.extractManifest(mpkgBytes);
-  const draft = {
-    ...publicKey,
-    packageId: manifest.packageId,
-    capabilities: manifest.capabilities,
-    idempotencyKey: `cert-${crypto.randomUUID()}`,
-  };
-  certificateDrafts.set(form, draft);
-  form.elements.package_id.value = draft.packageId;
-  form.elements.subject_key_id.value = draft.subjectKeyId;
-  form.elements.capabilities.value = draft.capabilities.length ? draft.capabilities.join("\n") : "（なし）";
-  const status = form.querySelector("[data-certificate-status]");
-  status.textContent = `manifest.tomlを確認しました（Capability ${draft.capabilities.length}件）。`;
-  status.dataset.state = "ready";
-  form.querySelector('button[type="submit"]').disabled = form.dataset.developerVerified !== "true";
-  return draft;
-}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -318,18 +251,11 @@ async function renderDeveloperDetail(developerId) {
       </div></section>
       <section class="section"><div class="section-title"><h2>Developer Certificates</h2></div><div class="grid">
         <section class="card"><div class="card__header"><div><h3>登録済み証明書</h3><p>Developer IDに結び付いた署名証明書です。</p></div></div>
-          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>証明書</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => `<tr><td><code>${escapeHtml(item.certificate_id || item.id)}</code></td><td>${statusBadge(item.status)}</td><td>${formatDate((item.certificate_details || item.certificate)?.content?.not_after || item.not_after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>application.pubとunsigned .mpkgからDeveloper Certificateを発行できます。</p></div>`}
+          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>証明書</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => `<tr><td><code>${escapeHtml(item.certificate_id || item.id)}</code></td><td>${statusBadge(item.status)}</td><td>${formatDate((item.certificate_details || item.certificate)?.content?.not_after || item.not_after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>Kome CLIで署名すると必要なDeveloper Certificateが自動発行されます。</p></div>`}
         </section>
-        <form class="card" id="certificate-issue-form" data-developer-id="${escapeHtml(developer.id)}" data-developer-verified="${developer.verification_status === "verified"}"><div class="card__header"><div><h3>証明書を発行</h3><p>公開鍵とMPKGのmanifest情報からMCER v1 Certificateを発行します。</p></div></div><div class="card__body form">
-          <label class="field"><span>Certificate Developer ID</span><input class="input" value="${escapeHtml(developer.certificate_developer_id || "")}" readonly></label>
-          <label class="field"><span>Developer公開鍵</span><input class="input input--file" type="file" accept=".pub,text/plain" name="public_key_file" required><small><code>msign key generate</code>で生成したapplication.pubを選択します。.keyは選択しないでください。</small></label>
-          <label class="field"><span>未署名MPKG</span><input class="input input--file" type="file" accept=".mpkg,application/octet-stream" name="mpkg_file" required><small>manifest.tomlはこのブラウザ内だけで解析され、MPKG本体はCloudへ送信されません。</small></label>
-          <label class="field"><span>Package ID</span><input class="input" name="package_id" readonly value=""></label>
-          <label class="field"><span>Subject Key ID</span><input class="input" name="subject_key_id" readonly value=""></label>
-          <label class="field"><span>Capability</span><textarea class="textarea" name="capabilities" readonly>MPKGを選択すると表示されます。</textarea></label>
-          <small data-certificate-status>application.pubとunsigned .mpkgを選択してください。</small>
-          <span class="field-error" data-error hidden></span>
-        </div><div class="card__footer"><button class="button button--primary" type="submit" disabled ${developer.verification_status !== "verified" ? "title=\"Developerの確認完了後に発行できます\"" : ""}>developer.certを発行</button></div></form>
+        <section class="card"><div class="card__header"><div><h3>Kome CLIで署名</h3><p>公開鍵、秘密鍵、MPKGはブラウザへアップロードしません。</p></div></div><div class="card__body"><p>初回は次を実行してください。</p><pre><code>kome login
+kome keygen
+kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manifestからPackage IDとCapabilityを読み取り、必要なCertificateを取得します。</p><a class="button button--secondary" href="https://accounts.mochios.org/#sessions">CLIセッションを管理</a></div></section>
       </div></section>`);
   } catch (error) {
     if (requestId !== detailRequestId) return;
@@ -528,28 +454,6 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-document.addEventListener("change", async (event) => {
-  const form = event.target.closest("#certificate-issue-form");
-  if (!form || !event.target.matches('input[type="file"]')) return;
-  const status = form.querySelector("[data-certificate-status]");
-  const errorElement = form.querySelector("[data-error]");
-  certificateDrafts.delete(form);
-  form.querySelector('button[type="submit"]').disabled = true;
-  if (errorElement) errorElement.hidden = true;
-  status.textContent = "公開鍵とmanifest.tomlを確認しています…";
-  status.dataset.state = "loading";
-  try {
-    await prepareCertificateDraft(form);
-  } catch (error) {
-    status.textContent = "入力を確認できませんでした。";
-    status.dataset.state = "error";
-    if (errorElement) {
-      errorElement.textContent = error.message;
-      errorElement.hidden = false;
-    }
-  }
-});
-
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
@@ -579,17 +483,6 @@ document.addEventListener("submit", async (event) => {
       const developerId = form.dataset.developerId;
       await api(`/v1/developers/${encodeURIComponent(developerId)}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
       showToast("メンバーを追加しました");
-      await renderDeveloperDetail(developerId);
-    });
-  }
-  if (form.id === "certificate-issue-form") {
-    await submitForm(form, async () => {
-      const developerId = form.dataset.developerId;
-      const draft = certificateDrafts.get(form) || await prepareCertificateDraft(form);
-      const payload = certificateIssuePayload(draft);
-      const result = await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/issue`, { method: "POST", headers: { "Content-Type": "application/json", "X-Idempotency-Key": draft.idempotencyKey }, body: JSON.stringify(payload) });
-      downloadCertificate(result.certificate);
-      showToast("developer.certを発行しました", "ダウンロードしたCertificateをapplication.keyと一緒に保管してください。");
       await renderDeveloperDetail(developerId);
     });
   }
