@@ -32,4 +32,4 @@ npx wrangler d1 execute mochios-console --remote --command "INSERT INTO develope
 npx wrangler d1 execute mochios-console --remote --command "INSERT INTO app_store_reviewers(account_id,created_at,created_by) VALUES('<Account UUID>',unixepoch(),'<登録者>')"
 ```
 
-deploy後はログイン、`.pub`＋unsigned MPKG解析、`developer.cert`保存、同一操作再送、viewer発行拒否、管理者失効、App審査を確認します。
+deploy後はログイン、Developer／Member表示、Kome CLI案内、旧発行UIが存在しないこと、管理者失効、App審査を確認します。CLI login／発行E2EはAccountsとDeveloperCAで実施します。
