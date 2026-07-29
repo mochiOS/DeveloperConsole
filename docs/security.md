@@ -8,7 +8,9 @@
 - 一般Certificate発行endpointをBFFから公開しない
 - 公開鍵、秘密鍵、MPKGを選択・解析・送信する発行UIを持たない
 - DeveloperCA管理操作は追加作成申請、Developer／Certificateの停止・再開、Certificate失効だけ
+- App Store一般操作は署名済みdelegation tokenからAccountを決定し、owner／admin／developer Memberだけに許可
 - App Store管理操作はRelease審査とパッケージの停止・再開だけ
 - AppStoreの`ADMIN_TOKEN`をブラウザへ返さない
+- Reviewer専用tokenをConsoleへ設定せず、Consoleからvalidation resultを送信できない
 
 Kome CLI credentialはAccountsが管理します。Consoleはaccess token、refresh token、device codeを受け取りません。

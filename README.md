@@ -1,6 +1,6 @@
 # mochiOS Developer Console
 
-`console.mochios.org`でDeveloper、Member、Certificate一覧、セキュリティ停止、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
+`console.mochios.org`でDeveloper、Member、Certificate一覧、GitHub Release登録、セキュリティ停止、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
 
 一般Developer Certificate発行はKome CLIが担当します。Consoleは公開鍵、秘密鍵、MPKGを選択・アップロードする発行UIを持ちません。
 
@@ -10,6 +10,8 @@
 ```
 
 CLI sessionの一覧・個別失効は[mochiOS ID](https://accounts.mochios.org/#sessions)へ移動して管理します。DeveloperとCertificateの事前審査はなく、管理者は問題発生時にDeveloper、Certificate、パッケージを停止または失効します。
+
+署名済みMPKGはDeveloper詳細のApp Store欄から登録します。Package IDを予約し、表示情報を作成した後、公開GitHub repository、固定tag、`.mpkg` asset名、使用したCertificateを指定します。MPKGをブラウザへアップロードする操作はありません。
 
 ```powershell
 node --check public/assets/app.js
