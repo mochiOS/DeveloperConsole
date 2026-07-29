@@ -264,10 +264,25 @@ async fn developer_reviewer_account(
 }
 
 fn valid_review_resource_id(value: &str) -> bool {
-    value.len() == 36
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    (value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || (value.len() == 36
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-'))
+}
+
+fn valid_package_id(value: &str) -> bool {
+    value.len() <= 253
+        && value.split('.').count() >= 3
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part.len() <= 63
+                && !part.starts_with('-')
+                && !part.ends_with('-')
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 fn valid_revocation_reason_code(value: &str) -> bool {
@@ -318,7 +333,7 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
     if !valid_review_resource_id(resource_id) {
         return error("RESOURCE_ID_INVALID", "審査対象IDが無効です。", 422);
     }
-    let requires_reason = matches!(action, "reject" | "revoke");
+    let requires_reason = matches!(action, "reject" | "revoke" | "suspend");
     let (reason, reason_code) = if requires_reason {
         let bytes = req.bytes().await?;
         if bytes.len() > MAX_JSON_BODY_BYTES {
@@ -351,18 +366,11 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
         (None, None)
     };
     let (path, body) = match (kind, action) {
-        ("developers", "verify") => (
-            format!("/v1/admin/developers/{resource_id}/verification"),
-            Some(serde_json::to_vec(
-                &json!({"verification_status": "verified"}),
-            )?),
+        ("developers", "suspend") => (
+            format!("/v1/admin/developers/{resource_id}/suspend"),
+            Some(serde_json::to_vec(&json!({"reason": reason}))?),
         ),
-        ("developers", "reject") => (
-            format!("/v1/admin/developers/{resource_id}/verification"),
-            Some(serde_json::to_vec(
-                &json!({"verification_status": "rejected"}),
-            )?),
-        ),
+        ("developers", "restore") => (format!("/v1/admin/developers/{resource_id}/restore"), None),
         ("creation-requests", "approve") => (
             format!("/v1/admin/developer-creation-requests/{resource_id}/approve"),
             Some(b"{}".to_vec()),
@@ -370,6 +378,14 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
         ("creation-requests", "reject") => (
             format!("/v1/admin/developer-creation-requests/{resource_id}/reject"),
             Some(serde_json::to_vec(&json!({"rejection_reason": reason}))?),
+        ),
+        ("certificates", "suspend") => (
+            format!("/v1/admin/certificates/{resource_id}/suspend"),
+            Some(serde_json::to_vec(&json!({"reason": reason}))?),
+        ),
+        ("certificates", "restore") => (
+            format!("/v1/admin/certificates/{resource_id}/restore"),
+            None,
         ),
         ("certificates", "revoke") => (
             format!("/v1/admin/certificates/{resource_id}/revoke"),
@@ -386,6 +402,84 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
             &ctx.env.d1("DB")?,
             &account.id,
             &format!("developer_ca.{kind}.{action}"),
+            now(),
+        )
+        .await?;
+    }
+    Ok(response)
+}
+
+async fn package_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let status = req
+        .url()?
+        .query_pairs()
+        .find(|(key, _)| key == "status")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_else(|| "active".into());
+    if !matches!(status.as_str(), "active" | "blocked") {
+        return error("STATUS_INVALID", "状態が無効です。", 422);
+    }
+    upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Get,
+        &format!("/v1/admin/packages?status={status}"),
+        None,
+    )
+    .await
+}
+
+async fn package_action(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let account = match reviewer_account(&req, &ctx.env).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    if !mutation_origin_allowed(&req, &ctx.env)? {
+        return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
+    }
+    let bundle_id = ctx.param("bundle_id").map(String::as_str).unwrap_or("");
+    let action = ctx.param("action").map(String::as_str).unwrap_or("");
+    if !valid_package_id(bundle_id) || !matches!(action, "suspend" | "restore") {
+        return error("PACKAGE_ACTION_INVALID", "パッケージ操作が無効です。", 422);
+    }
+    let body = if action == "suspend" {
+        let bytes = req.bytes().await?;
+        if bytes.len() > MAX_JSON_BODY_BYTES {
+            return error("REQUEST_TOO_LARGE", "リクエストが大きすぎます。", 413);
+        }
+        let input: DeveloperReviewActionInput = match serde_json::from_slice(&bytes) {
+            Ok(input) => input,
+            Err(_) => return error("JSON_INVALID", "JSONリクエストが無効です。", 400),
+        };
+        let reason = input.reason.unwrap_or_default().trim().to_owned();
+        if reason.is_empty() || reason.len() > 2000 {
+            return error(
+                "VALIDATION_ERROR",
+                "理由は1〜2000文字で入力してください。",
+                422,
+            );
+        }
+        Some(serde_json::to_vec(&json!({"reason":reason}))?)
+    } else {
+        None
+    };
+    let response = upstream::app_store(
+        &ctx.env,
+        &account.id,
+        Method::Post,
+        &format!("/v1/admin/packages/{bundle_id}/{action}"),
+        body,
+    )
+    .await?;
+    if response.status_code() < 400 {
+        store::record_review_action(
+            &ctx.env.d1("DB")?,
+            &account.id,
+            &format!("app_store.package.{action}"),
             now(),
         )
         .await?;
@@ -540,6 +634,8 @@ async fn route(req: Request, env: Env) -> Result<Response> {
             developer_review_action,
         )
         .get_async("/v1/app-store/reviews", review_list)
+        .get_async("/v1/app-store/packages", package_list)
+        .post_async("/v1/app-store/packages/:bundle_id/:action", package_action)
         .get_async("/v1/app-store/reviews/:release_id", review_detail)
         .post_async("/v1/app-store/reviews/:release_id/approve", approve_review)
         .post_async("/v1/app-store/reviews/:release_id/reject", reject_review)
@@ -585,15 +681,23 @@ mod tests {
         assert!(valid_release_id("rel_019f9d57"));
         assert!(!valid_release_id("../release"));
         assert!(!valid_release_id("release?status=approved"));
+        assert!(valid_review_resource_id("019f9e5ac6687902b0e72fe53abfbef1"));
+        assert!(valid_review_resource_id(
+            "019f9e5a-c668-7902-b0e7-2fe53abfbef1"
+        ));
     }
 
     #[test]
-    fn developer_certificate_admin_can_only_revoke_with_a_fixed_reason_code() {
+    fn security_admin_can_suspend_restore_and_revoke() {
         let source = include_str!("lib.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         let app = include_str!("../public/assets/app.js");
         assert!(!production.contains("/v1/developers/:developer_id/certificates/issue"));
         assert!(production.contains("(\"certificates\", \"revoke\")"));
+        assert!(production.contains("(\"certificates\", \"suspend\")"));
+        assert!(production.contains("(\"certificates\", \"restore\")"));
+        assert!(production.contains("(\"developers\", \"suspend\")"));
+        assert!(production.contains("/v1/app-store/packages/:bundle_id/:action"));
         assert!(production.contains("/v1/admin/certificates/{resource_id}/revoke"));
         assert!(!production.contains("/v1/admin/certificate-requests"));
         assert!(!production.contains("developer_policy_grant"));
@@ -607,6 +711,8 @@ mod tests {
         assert!(app.contains("kome sign"));
         assert!(!app.contains("certificates/register"));
         assert!(!app.contains("certificate-requests"));
+        assert!(app.contains("package-management-form"));
+        assert!(app.contains("developerManagementCard"));
     }
 
     #[test]
