@@ -33,3 +33,5 @@ npx wrangler d1 execute mochios-console --remote --command "INSERT INTO app_stor
 ```
 
 deploy後はログイン、サイドバーのDeveloper表示、Developer／Member表示、Kome CLI案内、旧発行UIが存在しないこと、Developer／Certificate／パッケージの停止・再開、管理者失効、App審査を確認します。CLI login／発行E2EはAccountsとDeveloperCAで実施します。
+
+管理操作の本番確認では、操作履歴にAccount ID、対象ID、接続元IP、User-Agent、Cloudflare Ray IDが記録されることを確認します。監査ログはappend-onlyで、Consoleの管理画面から更新・削除できません。

@@ -13,6 +13,8 @@ CLI sessionの一覧・個別失効は[mochiOS ID](https://accounts.mochios.org/
 
 署名済みMPKGはDeveloper詳細のApp Store欄から登録します。Bundle IDを予約し、予約済みIDからアプリ情報を作成した後、公開GitHub repository、固定tag、`.mpkg` asset名、使用した有効なCertificateを選択します。価格表示と最低mochiOSバージョンは現在の登録項目に含めません。MPKGをブラウザへアップロードする操作はありません。
 
+管理権限を持つAccountには専用の管理ページを表示します。App Store Releaseは処理中、承認済み、却下済みを横断検索でき、Developer CAの管理対象もID、名前、Bundle ID、Capabilityで検索できます。成功した管理操作は操作者、対象ID、接続元IP、User-Agent、Cloudflare Ray IDとともにappend-only監査ログへ記録します。
+
 ```powershell
 node --check public/assets/app.js
 cargo test --all-targets

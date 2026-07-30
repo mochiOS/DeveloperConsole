@@ -12,5 +12,11 @@
 - App Store管理操作はRelease審査とパッケージの停止・再開だけ
 - AppStoreの`ADMIN_TOKEN`をブラウザへ返さない
 - Reviewer専用tokenをConsoleへ設定せず、Consoleからvalidation resultを送信できない
+- 成功した管理操作だけをD1のappend-only監査ログへ記録
+- 監査ログは操作者、操作種別、対象ID、日時、接続元IP、User-Agent、Cloudflare Ray IDを保持
+- 接続元IPはCloudflareが付与する`CF-Connecting-IPv6`を優先し、次に`CF-Connecting-IP`を構文検証して使用する
+- `X-Forwarded-For`やブラウザから送信されたJSONのIP値を監査情報として信用しない
+- 監査ログAPIはApp Store／Developer CA管理権限を検査し、付与されたサービスの操作だけを返す
+- IPとUser-Agentは一般Developer画面や公開APIへ返さない
 
 Kome CLI credentialはAccountsが管理します。Consoleはaccess token、refresh token、device codeを受け取りません。

@@ -1,7 +1,7 @@
 use uuid::{NoContext, Timestamp, Uuid};
 use worker::{D1Database, Result, wasm_bindgen::JsValue};
 
-use crate::model::{SessionIssue, SessionRow};
+use crate::model::{AuditLogRow, SessionIssue, SessionRow};
 use crate::security::{random_token, token_hash};
 
 fn value(value: impl AsRef<str>) -> JsValue {
@@ -118,10 +118,52 @@ pub async fn record_review_action(
     db: &D1Database,
     account_id: &str,
     event_type: &str,
+    resource_id: &str,
+    ip_address: Option<&str>,
+    user_agent: Option<&str>,
+    cf_ray: Option<&str>,
     now: i64,
 ) -> Result<()> {
-    audit(db, Some(account_id), event_type, now)?.run().await?;
+    db.prepare(
+        "INSERT INTO audit_logs
+         (id, account_id, event_type, resource_id, ip_address, user_agent, cf_ray, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(&[
+        value(id(now)),
+        value(account_id),
+        value(event_type),
+        value(resource_id),
+        ip_address.map(value).unwrap_or(JsValue::NULL),
+        user_agent.map(value).unwrap_or(JsValue::NULL),
+        cf_ray.map(value).unwrap_or(JsValue::NULL),
+        number(now),
+    ])?
+    .run()
+    .await?;
     Ok(())
+}
+
+pub async fn review_audit_logs(
+    db: &D1Database,
+    app_store_access: bool,
+    developer_ca_access: bool,
+) -> Result<Vec<AuditLogRow>> {
+    db.prepare(
+        "SELECT id, account_id, event_type, resource_id, ip_address, user_agent, cf_ray, created_at
+           FROM audit_logs
+          WHERE (?1 = 1 AND event_type LIKE 'app_store.%')
+             OR (?2 = 1 AND event_type LIKE 'developer_ca.%')
+          ORDER BY created_at DESC
+          LIMIT 200",
+    )
+    .bind(&[
+        number(i64::from(app_store_access)),
+        number(i64::from(developer_ca_access)),
+    ])?
+    .all()
+    .await?
+    .results()
 }
 
 #[cfg(test)]
@@ -147,5 +189,11 @@ mod tests {
         let developer_reviewer_schema =
             include_str!("../migrations/0003_developer_ca_reviewers.sql");
         assert!(developer_reviewer_schema.contains("account_id TEXT PRIMARY KEY"));
+
+        let audit_context_schema = include_str!("../migrations/0004_admin_audit_context.sql");
+        assert!(audit_context_schema.contains("ip_address TEXT"));
+        assert!(audit_context_schema.contains("user_agent TEXT"));
+        assert!(audit_context_schema.contains("cf_ray TEXT"));
+        assert!(audit_context_schema.contains("resource_id TEXT"));
     }
 }

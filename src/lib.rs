@@ -3,6 +3,8 @@ mod security;
 mod store;
 mod upstream;
 
+use std::net::IpAddr;
+
 use model::Account;
 use security::{
     AUTH_STATE_COOKIE, SESSION_COOKIE, constant_time_eq, expired_cookie, parse_cookie,
@@ -177,6 +179,44 @@ fn mutation_origin_allowed(req: &Request, env: &Env) -> Result<bool> {
     Ok(origin == expected.trim_end_matches('/'))
 }
 
+struct RequestAuditContext {
+    ip_address: Option<String>,
+    user_agent: Option<String>,
+    cf_ray: Option<String>,
+}
+
+fn request_audit_context(req: &Request) -> Result<RequestAuditContext> {
+    let headers = req.headers();
+    let ip_address = ["CF-Connecting-IPv6", "CF-Connecting-IP"]
+        .into_iter()
+        .find_map(|name| {
+            headers
+                .get(name)
+                .ok()
+                .flatten()
+                .and_then(|value| value.parse::<IpAddr>().ok())
+                .map(|value| value.to_string())
+        });
+    let user_agent = headers.get("User-Agent")?.and_then(|value| {
+        let value = value.trim().chars().take(512).collect::<String>();
+        (!value.is_empty()).then_some(value)
+    });
+    let cf_ray = headers.get("CF-Ray")?.and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+        .then(|| value.to_owned())
+    });
+    Ok(RequestAuditContext {
+        ip_address,
+        user_agent,
+        cf_ray,
+    })
+}
+
 async fn proxy_route(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(account) = current_account(&req, &ctx.env).await? else {
         return error("UNAUTHENTICATED", "ログインが必要です。", 401);
@@ -287,14 +327,37 @@ async fn review_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Ok(account) => account,
         Err(response) => return Ok(response),
     };
+    let status = req
+        .url()?
+        .query_pairs()
+        .find(|(key, _)| key == "status")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_else(|| "queue".into());
+    if !matches!(status.as_str(), "queue" | "approved" | "rejected") {
+        return error("STATUS_INVALID", "状態が無効です。", 422);
+    }
     upstream::app_store(
         &ctx.env,
         &account.id,
         Method::Get,
-        "/v1/admin/releases?status=queue",
+        &format!("/v1/admin/releases?status={status}"),
         None,
     )
     .await
+}
+
+async fn management_audit_logs(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let Some(account) = current_account(&req, &ctx.env).await? else {
+        return error("UNAUTHENTICATED", "ログインが必要です。", 401);
+    };
+    let db = ctx.env.d1("DB")?;
+    let app_store_access = store::is_app_store_reviewer(&db, &account.id).await?;
+    let developer_ca_access = store::is_developer_ca_reviewer(&db, &account.id).await?;
+    if !app_store_access && !developer_ca_access {
+        return error("ADMIN_REQUIRED", "管理者だけが利用できます。", 403);
+    }
+    let logs = store::review_audit_logs(&db, app_store_access, developer_ca_access).await?;
+    json_response(&json!({"audit_logs": logs}), 200)
 }
 
 async fn developer_reviewer_account(
@@ -368,6 +431,7 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
     if !mutation_origin_allowed(&req, &ctx.env)? {
         return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
     }
+    let audit_context = request_audit_context(&req)?;
     let kind = ctx.param("kind").map(String::as_str).unwrap_or("");
     let resource_id = ctx.param("resource_id").map(String::as_str).unwrap_or("");
     let action = ctx.param("action").map(String::as_str).unwrap_or("");
@@ -443,6 +507,10 @@ async fn developer_review_action(mut req: Request, ctx: RouteContext<()>) -> Res
             &ctx.env.d1("DB")?,
             &account.id,
             &format!("developer_ca.{kind}.{action}"),
+            resource_id,
+            audit_context.ip_address.as_deref(),
+            audit_context.user_agent.as_deref(),
+            audit_context.cf_ray.as_deref(),
             now(),
         )
         .await?;
@@ -482,6 +550,7 @@ async fn package_action(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     if !mutation_origin_allowed(&req, &ctx.env)? {
         return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
     }
+    let audit_context = request_audit_context(&req)?;
     let bundle_id = ctx.param("bundle_id").map(String::as_str).unwrap_or("");
     let action = ctx.param("action").map(String::as_str).unwrap_or("");
     if !valid_package_id(bundle_id) || !matches!(action, "suspend" | "restore") {
@@ -521,6 +590,10 @@ async fn package_action(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             &ctx.env.d1("DB")?,
             &account.id,
             &format!("app_store.package.{action}"),
+            bundle_id,
+            audit_context.ip_address.as_deref(),
+            audit_context.user_agent.as_deref(),
+            audit_context.cf_ray.as_deref(),
             now(),
         )
         .await?;
@@ -555,6 +628,7 @@ async fn approve_review(req: Request, ctx: RouteContext<()>) -> Result<Response>
     if !mutation_origin_allowed(&req, &ctx.env)? {
         return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
     }
+    let audit_context = request_audit_context(&req)?;
     let release_id = ctx.param("release_id").map(String::as_str).unwrap_or("");
     if !valid_release_id(release_id) {
         return error("RELEASE_ID_INVALID", "Release IDが無効です。", 422);
@@ -572,6 +646,10 @@ async fn approve_review(req: Request, ctx: RouteContext<()>) -> Result<Response>
             &ctx.env.d1("DB")?,
             &account.id,
             "app_store.release.approved",
+            release_id,
+            audit_context.ip_address.as_deref(),
+            audit_context.user_agent.as_deref(),
+            audit_context.cf_ray.as_deref(),
             now(),
         )
         .await?;
@@ -595,6 +673,7 @@ async fn reject_review(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     if !mutation_origin_allowed(&req, &ctx.env)? {
         return error("ORIGIN_INVALID", "リクエスト元を確認できません。", 403);
     }
+    let audit_context = request_audit_context(&req)?;
     let release_id = ctx.param("release_id").map(String::as_str).unwrap_or("");
     if !valid_release_id(release_id) {
         return error("RELEASE_ID_INVALID", "Release IDが無効です。", 422);
@@ -650,6 +729,10 @@ async fn reject_review(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
             &ctx.env.d1("DB")?,
             &account.id,
             "app_store.release.rejected",
+            release_id,
+            audit_context.ip_address.as_deref(),
+            audit_context.user_agent.as_deref(),
+            audit_context.cf_ray.as_deref(),
             now(),
         )
         .await?;
@@ -687,6 +770,7 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         )
         .get_async("/v1/certificates/:certificate_id", proxy_route)
         .get_async("/v1/developer-reviews", developer_review_queue)
+        .get_async("/v1/management/audit-logs", management_audit_logs)
         .post_async(
             "/v1/developer-reviews/:kind/:resource_id/:action",
             developer_review_action,
@@ -826,8 +910,10 @@ mod tests {
     #[test]
     fn review_queue_shows_validation_pending_releases() {
         let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
         let app = include_str!("../public/assets/app.js");
-        assert!(source.contains("/v1/admin/releases?status=queue"));
+        assert!(production.contains("\"queue\" | \"approved\" | \"rejected\""));
+        assert!(production.contains("/v1/admin/releases?status={status}"));
         assert!(app.contains("機械検証待ち"));
         assert!(app.contains("release.submitted_at || release.created_at"));
         assert!(!app.contains("検証を通過したReleaseだけを表示します"));
@@ -848,6 +934,22 @@ mod tests {
         assert!(app.contains("appStoreReviewer || developerCaReviewer"));
         assert!(!app.contains(">${icon(\"security\")}Developer管理</a>"));
         assert!(!app.contains(">${icon(\"fact_check\")}App審査</a>"));
+    }
+
+    #[test]
+    fn successful_admin_mutations_record_trusted_connection_context() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(production.contains("CF-Connecting-IPv6"));
+        assert!(production.contains("CF-Connecting-IP"));
+        assert!(production.contains("CF-Ray"));
+        assert!(production.contains("User-Agent"));
+        assert!(!production.contains("X-Forwarded-For"));
+        assert_eq!(
+            production.matches("request_audit_context(&req)?").count(),
+            4
+        );
+        assert_eq!(production.matches("record_review_action(").count(), 4);
     }
 
     #[test]
