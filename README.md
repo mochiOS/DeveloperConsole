@@ -1,6 +1,6 @@
 # mochiOS Developer Console
 
-`console.mochios.org`でDeveloper、Member、Certificate一覧、GitHub Release登録、セキュリティ停止、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
+`console.mochios.org`でDeveloper、Member、Certificate一覧、GitHub Releasesを配布元とするApp Storeへのリリース提出、セキュリティ停止、App Store審査を扱うRust／`workers-rs`製BFFと日本語フロントエンドです。
 
 一般Developer Certificate発行はKome CLIが担当します。Consoleは公開鍵、秘密鍵、MPKGを選択・アップロードする発行UIを持ちません。
 
