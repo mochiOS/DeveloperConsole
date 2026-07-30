@@ -729,7 +729,7 @@ document.addEventListener("submit", async (event) => {
       const bundleId = values.bundle_id;
       delete values.bundle_id;
       await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(bundleId)}/releases`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
-      showToast("GitHub Releaseを登録しました。Reviewer検証を実行してください");
+      showToast("GitHub Releaseを登録しました。審査が完了するまでお待ちください。");
       await renderDeveloperDetail(developerId);
     });
   }
