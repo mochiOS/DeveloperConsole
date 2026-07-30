@@ -937,6 +937,20 @@ mod tests {
     }
 
     #[test]
+    fn admin_history_is_searchable_and_does_not_hide_completed_releases() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        let app = include_str!("../public/assets/app.js");
+        assert!(production.contains("/v1/management/audit-logs"));
+        assert!(app.contains("/v1/app-store/reviews?status=approved"));
+        assert!(app.contains("/v1/app-store/reviews?status=rejected"));
+        assert!(app.contains("data-table-search"));
+        assert!(app.contains("applyManagementFilter"));
+        assert!(app.contains("処理が完了したReleaseも一覧から消えません"));
+        assert!(app.contains("async function renderAuditLogs()"));
+    }
+
+    #[test]
     fn successful_admin_mutations_record_trusted_connection_context() {
         let source = include_str!("lib.rs");
         let production = source.split("#[cfg(test)]").next().unwrap_or_default();

@@ -29,6 +29,12 @@ function formatDate(seconds) {
     .format(new Date(Number(seconds) * 1000));
 }
 
+function formatDateTime(seconds) {
+  if (!Number.isFinite(Number(seconds))) return "—";
+  return new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "medium", timeZone: "Asia/Tokyo" })
+    .format(new Date(Number(seconds) * 1000));
+}
+
 function formatBytes(value) {
   const bytes = Number(value);
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
@@ -209,7 +215,7 @@ function activeRoute() {
   const hash = window.location.hash || "#overview";
   if (hash.startsWith("#developers")) return "developers";
   if (hash === "#requests") return "requests";
-  if (hash === "#admin" || hash === "#developer-reviews" || hash.startsWith("#reviews")) return "admin";
+  if (hash.startsWith("#admin") || hash === "#developer-reviews" || hash.startsWith("#reviews")) return "admin";
   return "overview";
 }
 
@@ -451,6 +457,59 @@ function reviewerAction(release) {
   </article>`;
 }
 
+function adminNavigation(active) {
+  return `<nav class="admin-tabs" aria-label="管理メニュー">
+    <a href="#admin" ${active === "overview" ? 'aria-current="page"' : ""}>概要</a>
+    ${appStoreReviewer ? `<a href="#reviews" ${active === "app-store" ? 'aria-current="page"' : ""}>App Store</a>` : ""}
+    ${developerCaReviewer ? `<a href="#developer-reviews" ${active === "developer-ca" ? 'aria-current="page"' : ""}>Developer CA</a>` : ""}
+    <a href="#admin/audit" ${active === "audit" ? 'aria-current="page"' : ""}>操作履歴</a>
+  </nav>`;
+}
+
+function releaseManagementState(release) {
+  if (release.validation_status === "pending") return "validation_pending";
+  if (release.validation_status === "invalid") return "validation_failed";
+  if (release.validation_status === "valid" && release.review_status === "submitted" && release.publish_status === "draft") return "review_ready";
+  if (release.review_status === "approved") return "approved";
+  if (release.review_status === "rejected") return "rejected";
+  return "other";
+}
+
+function managementStateLabel(state) {
+  return {
+    validation_pending: "機械検証待ち",
+    validation_failed: "検証失敗",
+    review_ready: "審査可能",
+    approved: "承認済み",
+    rejected: "却下済み",
+    other: "その他",
+  }[state] || state;
+}
+
+function auditEventLabel(value) {
+  const labels = {
+    "app_store.release.approved": "Releaseを承認・公開",
+    "app_store.release.rejected": "Releaseを却下",
+    "app_store.package.suspend": "Packageを停止",
+    "app_store.package.restore": "Packageを再開",
+    "developer_ca.developers.suspend": "Developerを停止",
+    "developer_ca.developers.restore": "Developerを再開",
+    "developer_ca.creation-requests.approve": "追加作成申請を承認",
+    "developer_ca.creation-requests.reject": "追加作成申請を却下",
+    "developer_ca.certificates.suspend": "証明書を一時停止",
+    "developer_ca.certificates.restore": "証明書を再開",
+    "developer_ca.certificates.revoke": "証明書を失効",
+  };
+  return labels[value] || value;
+}
+
+function managementToolbar({ key, placeholder, filters = [] }) {
+  return `<div class="management-toolbar">
+    <label class="management-search">${icon("search")}<input type="search" placeholder="${escapeHtml(placeholder)}" data-table-search="${escapeHtml(key)}" aria-label="検索"></label>
+    ${filters.length ? `<label class="management-filter"><span>状態</span><select class="select" data-table-filter="${escapeHtml(key)}"><option value="all">すべて</option>${filters.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("")}</select></label>` : ""}
+  </div>`;
+}
+
 async function renderAdmin() {
   if (!appStoreReviewer && !developerCaReviewer) return renderOverview();
   document.title = "管理 | mochiOS ID Developer";
@@ -464,7 +523,8 @@ async function renderAdmin() {
   const developerRequest = developerCaReviewer
     ? api("/v1/developer-reviews").catch((error) => ({ error }))
     : Promise.resolve(null);
-  const [appStoreData, developerData] = await Promise.all([appStoreRequest, developerRequest]);
+  const auditRequest = api("/v1/management/audit-logs").catch((error) => ({ error }));
+  const [appStoreData, developerData, auditData] = await Promise.all([appStoreRequest, developerRequest, auditRequest]);
 
   const serviceCards = [];
   if (appStoreReviewer) {
@@ -540,14 +600,19 @@ async function renderAdmin() {
     ...validationFailed.map((release) => `<article class="admin-action"><div><strong>${escapeHtml(release.display_name || release.bundle_id)} ${escapeHtml(release.version)}</strong><small>MPKGの機械検証に失敗しています</small></div><a class="button button--secondary button--compact" href="#reviews/${encodeURIComponent(release.release_id)}">結果を確認${icon("chevron_right")}</a></article>`),
     ...(developerCaReviewer && creationPending.length ? [`<article class="admin-action"><div><strong>追加Developer作成申請</strong><small>${creationPending.length}件の申請が審査を待っています</small></div><a class="button button--primary button--compact" href="#developer-reviews">申請を確認${icon("chevron_right")}</a></article>`] : []),
   ];
+  const recentAuditLogs = (auditData?.audit_logs || []).slice(0, 5);
 
   app.innerHTML = shell(`${heading("ADMINISTRATION", "管理", "このページは運営権限を持つアカウントだけに表示されます。")}
+    ${adminNavigation("overview")}
     <section class="admin-access" aria-label="付与されている管理権限">
       <div class="section-title"><div><h2>あなたの管理権限</h2><p>付与されていないサービスの管理画面やデータは表示されません。</p></div><span class="queue-count">${serviceCards.length}</span></div>
       <div class="grid admin-services">${serviceCards.join("")}</div>
     </section>
     <section class="section"><div class="section-title"><div><h2>次に行うこと</h2><p>現在、管理者による処理が必要な項目です。</p></div><span class="queue-count">${nextActions.length}</span></div>
       <div class="card admin-actions">${nextActions.length ? nextActions.join("") : `<div class="empty">${icon("check_circle")}<h3>必要な作業はありません</h3><p>新しい提出や申請が届くと、ここに次の操作が表示されます。</p></div>`}</div>
+    </section>
+    <section class="section"><div class="section-title"><div><h2>最近の管理操作</h2><p>成功した管理操作だけが、接続情報とともに記録されます。</p></div><a class="section-link" href="#admin/audit">すべて表示${icon("chevron_right")}</a></div>
+      <div class="card">${recentAuditLogs.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>操作</th><th>対象</th><th>操作者</th><th>IP</th><th>日時</th></tr></thead><tbody>${recentAuditLogs.map((item) => `<tr><td><strong>${escapeHtml(auditEventLabel(item.event_type))}</strong></td><td><code>${escapeHtml(item.resource_id || "—")}</code></td><td><code>${escapeHtml(item.account_id || "—")}</code></td><td><code>${escapeHtml(item.ip_address || "—")}</code></td><td>${formatDate(item.created_at)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty empty--compact">${icon("history")}<h3>管理操作はまだありません</h3></div>`}</div>
     </section>
     <section class="section"><div class="section-title"><div><h2>管理画面の表示ルール</h2><p>一覧に出る項目と、一覧から除外される項目を状態別に示します。</p></div></div>
       <div class="card admin-visibility">${visibilityRows}</div>
@@ -558,26 +623,38 @@ async function renderReviews() {
   if (!appStoreReviewer) return renderOverview();
   reviewSkeleton();
   try {
-    const [result, activePackagesResult, blockedPackagesResult] = await Promise.all([
-      api("/v1/app-store/reviews"),
+    const [queueResult, approvedResult, rejectedResult, activePackagesResult, blockedPackagesResult] = await Promise.all([
+      api("/v1/app-store/reviews?status=queue"),
+      api("/v1/app-store/reviews?status=approved"),
+      api("/v1/app-store/reviews?status=rejected"),
       api("/v1/app-store/packages?status=active"),
       api("/v1/app-store/packages?status=blocked"),
     ]);
-    const releases = result.releases || [];
-    const validationPending = releases.filter((release) => release.validation_status === "pending").length;
-    const reviewReady = releases.filter((release) => release.validation_status === "valid" && release.review_status === "submitted").length;
+    const queue = queueResult.releases || [];
+    const approved = approvedResult.releases || [];
+    const rejected = rejectedResult.releases || [];
+    const releases = [...queue, ...approved, ...rejected];
+    const validationPending = queue.filter((release) => release.validation_status === "pending").length;
+    const reviewReady = queue.filter((release) => releaseManagementState(release) === "review_ready").length;
     const packages = [...(blockedPackagesResult.packages || []), ...(activePackagesResult.packages || [])];
-    document.title = "App審査 | mochiOS ID Developer";
-    app.innerHTML = shell(`${heading("APP STORE", "App審査", "提出されたReleaseを機械検証から公開判断まで追跡します。")}
-      <section class="metrics" aria-label="App審査概要">
-        <article class="metric"><span>処理中</span><strong>${releases.length}</strong></article>
+    document.title = "App Store管理 | mochiOS ID Developer";
+    app.innerHTML = shell(`${heading("APP STORE ADMIN", "Release管理", "処理中と処理済みのReleaseを、ひとつの一覧で検索・確認できます。")}
+      ${adminNavigation("app-store")}
+      <section class="management-metrics" aria-label="App Store管理概要">
+        <article class="metric"><span>処理中</span><strong>${queue.length}</strong></article>
         <article class="metric"><span>機械検証待ち</span><strong>${validationPending}</strong></article>
         <article class="metric"><span>審査可能</span><strong>${reviewReady}</strong></article>
+        <article class="metric"><span>承認済み</span><strong>${approved.length}</strong></article>
+        <article class="metric"><span>却下済み</span><strong>${rejected.length}</strong></article>
       </section>
-      <section class="card"><div class="card__header"><div><h2>提出済みRelease</h2><p>機械検証待ちを含む、公開判断が完了していないReleaseです。</p></div></div>
-        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>審査</th><th>登録／提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code><br><small><code>${escapeHtml(release.release_id)}</code></small></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${statusBadge(release.review_status)}</td><td>${formatDate(release.submitted_at || release.created_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">状態を確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>処理中のReleaseはありません</h3><p>App Storeへ提出されたReleaseがここに表示されます。</p></div>`}
+      <section class="card management-panel"><div class="card__header"><div><h2>すべてのRelease</h2><p>処理が完了したReleaseも一覧から消えません。</p></div><span class="queue-count">${releases.length}</span></div>
+        ${managementToolbar({ key: "app-store-releases", placeholder: "Release ID、Bundle ID、アプリ名、Versionを検索", filters: [["validation_pending", "機械検証待ち"], ["review_ready", "審査可能"], ["validation_failed", "検証失敗"], ["approved", "承認済み"], ["rejected", "却下済み"]] })}
+        ${releases.length ? `<div class="table-wrap"><table class="table management-table"><thead><tr><th>アプリ</th><th>Version</th><th>状態</th><th>提出日</th><th></th></tr></thead><tbody>${releases.map((release) => { const state = releaseManagementState(release); const search = [release.display_name, release.bundle_id, release.release_id, release.version].filter(Boolean).join(" ").toLocaleLowerCase("ja"); return `<tr data-filter-row="app-store-releases" data-filter-state="${escapeHtml(state)}" data-filter-search="${escapeHtml(search)}"><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><small><code>${escapeHtml(release.bundle_id)}</code></small><small><code>${escapeHtml(release.release_id)}</code></small></td><td>${escapeHtml(release.version)}</td><td><span class="management-state management-state--${escapeHtml(state)}">${escapeHtml(managementStateLabel(state))}</span></td><td>${formatDate(release.submitted_at || release.created_at)}</td><td><a class="row-action" href="#reviews/${encodeURIComponent(release.release_id)}">詳細${icon("chevron_right")}</a></td></tr>`; }).join("")}<tr data-filter-empty="app-store-releases" hidden><td colspan="5"><div class="empty empty--compact"><h3>条件に一致するReleaseはありません</h3></div></td></tr></tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>Releaseはありません</h3><p>App Storeへ提出されたReleaseがここに表示されます。</p></div>`}
       </section>
-      ${reviewQueueSection("パッケージの公開制御", "問題のあるパッケージは全Releaseを即時停止し、調査後に再開できます。", packages, packageManagementCard)}`);
+      <section class="section"><div class="section-title"><div><h2>Packageの公開制御</h2><p>問題のあるPackageは全Releaseを即時停止し、調査後に再開できます。</p></div><span class="queue-count">${packages.length}</span></div>
+        ${managementToolbar({ key: "app-store-packages", placeholder: "Bundle ID、アプリ名を検索" })}
+        <div data-card-scope="app-store-packages">${packages.length ? `<div class="review-queue">${packages.map(packageManagementCard).join("")}</div>` : `<div class="card empty">${icon("check_circle")}<h3>Packageはありません</h3></div>`}<div class="card empty empty--compact" data-card-empty="app-store-packages" hidden><h3>条件に一致するPackageはありません</h3></div></div>
+      </section>`);
   } catch (error) {
     app.innerHTML = shell(`${heading("APP STORE", "審査一覧を取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-reviews">再試行</button></p></div>`);
   }
@@ -586,7 +663,7 @@ async function renderReviews() {
 function packageManagementCard(item) {
   const blocked = item.package_status === "blocked";
   const action = blocked ? "restore" : "suspend";
-  return `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(item.display_name || item.bundle_id)}</h3><p><code>${escapeHtml(item.bundle_id)}</code></p></div>${statusBadge(item.package_status)}</div>
+  return `<article class="card review-item" data-search-card="app-store-packages" data-card-search="${escapeHtml([item.display_name, item.bundle_id].filter(Boolean).join(" ").toLocaleLowerCase("ja"))}"><div class="card__header"><div><h3>${escapeHtml(item.display_name || item.bundle_id)}</h3><p><code>${escapeHtml(item.bundle_id)}</code></p></div>${statusBadge(item.package_status)}</div>
     ${blocked && item.suspension_reason ? `<div class="card__body"><p class="pre-wrap">${escapeHtml(item.suspension_reason)}</p></div>` : ""}
     <form class="reject-row package-management-form" data-bundle-id="${escapeHtml(item.bundle_id)}" data-action-name="${action}">
       ${blocked ? "" : `<label class="field"><span>停止理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label>`}
@@ -665,14 +742,14 @@ function certificateManagementCard(item) {
   const scopes = (content.package_id_scopes || []).map((scope) => `<code>${escapeHtml(scope)}</code>`).join(" ") || "—";
   const capabilities = (content.allowed_capabilities || []).map((capability) => `<code>${escapeHtml(capability)}</code>`).join(" ") || "なし";
   const suspended = item.status === "suspended";
-  return `<article class="card review-item"><div class="card__header"><div><h3><code>${escapeHtml(item.id)}</code></h3><p>Developer <code>${escapeHtml(content.developer_id || "")}</code></p></div>${statusBadge(item.status)}</div><div class="card__body"><dl class="detail-list"><div><dt>Package ID scope</dt><dd class="policy-list">${scopes}</dd></div><div><dt>Capability</dt><dd class="policy-list">${capabilities}</dd></div><div><dt>Subject key</dt><dd><code>${escapeHtml(content.subject_key_id || "")}</code></dd></div><div><dt>有効期限</dt><dd>${formatDate(content.not_after)}</dd></div></dl></div>
+  return `<article class="card review-item" data-search-card="developer-ca" data-card-search="${escapeHtml([item.id, content.developer_id, ...(content.package_id_scopes || []), ...(content.allowed_capabilities || [])].filter(Boolean).join(" ").toLocaleLowerCase("ja"))}"><div class="card__header"><div><h3><code>${escapeHtml(item.id)}</code></h3><p>Developer <code>${escapeHtml(content.developer_id || "")}</code></p></div>${statusBadge(item.status)}</div><div class="card__body"><dl class="detail-list"><div><dt>Package ID scope</dt><dd class="policy-list">${scopes}</dd></div><div><dt>Capability</dt><dd class="policy-list">${capabilities}</dd></div><div><dt>Subject key</dt><dd><code>${escapeHtml(content.subject_key_id || "")}</code></dd></div><div><dt>有効期限</dt><dd>${formatDate(content.not_after)}</dd></div></dl></div>
     <form class="reject-row developer-review-form" data-kind="certificates" data-resource-id="${escapeHtml(item.id)}" data-review-action="${suspended ? "restore" : "suspend"}">${suspended ? "" : `<label class="field"><span>停止理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label>`}<button class="button button--secondary" type="submit">${suspended ? "証明書を再開" : "証明書を一時停止"}</button><span class="field-error" data-error hidden></span></form>
     <form class="reject-row developer-review-form" data-kind="certificates" data-resource-id="${escapeHtml(item.id)}" data-review-action="revoke"><label class="field"><span>失効理由コード</span><select class="select" name="reason_code" required><option value="key_compromise">鍵の侵害</option><option value="developer_suspended">Developer停止</option><option value="certificate_replaced">証明書の置換</option><option value="scope_violation">Scope違反</option><option value="administrative">管理上の理由</option><option value="unspecified">その他</option></select></label><label class="field"><span>失効理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label><button class="button button--danger" type="submit">証明書を失効</button><span class="field-error" data-error hidden></span></form></article>`;
 }
 
 function developerManagementCard(developer) {
   const suspended = developer.status === "suspended";
-  return `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(developer.display_name)}</h3><p><code>${escapeHtml(developer.id)}</code></p></div><span class="badges">${statusBadge(developer.developer_type)}${statusBadge(developer.status)}</span></div>
+  return `<article class="card review-item" data-search-card="developer-ca" data-card-search="${escapeHtml([developer.display_name, developer.id, developer.developer_type, developer.status].filter(Boolean).join(" ").toLocaleLowerCase("ja"))}"><div class="card__header"><div><h3>${escapeHtml(developer.display_name)}</h3><p><code>${escapeHtml(developer.id)}</code></p></div><span class="badges">${statusBadge(developer.developer_type)}${statusBadge(developer.status)}</span></div>
     <form class="reject-row developer-review-form" data-kind="developers" data-resource-id="${escapeHtml(developer.id)}" data-review-action="${suspended ? "restore" : "suspend"}">${suspended ? "" : `<label class="field"><span>停止理由</span><input class="input" name="reason" minlength="1" maxlength="2000" required></label>`}<button class="button ${suspended ? "button--secondary" : "button--danger"}" type="submit">${suspended ? "Developerを再開" : "Developerを停止"}</button><span class="field-error" data-error hidden></span></form></article>`;
 }
 
@@ -691,18 +768,41 @@ async function renderDeveloperReviews() {
     const creationItems = queue.developer_creation_requests || [];
     const certificateItems = queue.certificates || [];
     document.title = "Developer管理 | mochiOS ID Developer";
-    app.innerHTML = shell(`${heading("DEVELOPER CA", "Developer管理", "Developerは自動で利用可能になります。管理者は問題発生時だけ停止または失効します。")}
-      <section class="metrics" aria-label="Developer審査概要">
+    app.innerHTML = shell(`${heading("DEVELOPER CA ADMIN", "Developer管理", "Developer、追加作成申請、署名証明書を横断して検索・管理できます。")}
+      ${adminNavigation("developer-ca")}
+      <section class="management-metrics" aria-label="Developer管理概要">
         <article class="metric"><span>Developer</span><strong>${developerItems.length}</strong></article>
         <article class="metric"><span>追加作成申請</span><strong>${creationItems.length}</strong></article>
-        <article class="metric"><span>有効な証明書</span><strong>${certificateItems.length}</strong></article>
+        <article class="metric"><span>管理対象証明書</span><strong>${certificateItems.length}</strong></article>
       </section>
-      ${reviewQueueSection("Developerの利用状態", "問題のあるDeveloperは署名発行と既存証明書の利用を即時停止できます。", developerItems, developerManagementCard)}
-      ${reviewQueueSection("追加Developer作成申請", "標準上限を超えるDeveloper作成理由を確認します。", creationItems, (request) => `<article class="card review-item"><div class="card__header"><div><h3>${escapeHtml(request.requested_display_name)}</h3><p>${escapeHtml(request.reason)}</p></div><span class="badges">${statusBadge(request.requested_developer_type)}${statusBadge(request.status)}</span></div><div class="card__body"><dl class="detail-list"><div><dt>申請Account</dt><dd><code>${escapeHtml(request.account_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("creation-requests", request.id, "approve", "作成枠を承認")}</article>`)}
-      ${reviewQueueSection("Developer Certificates", "調査中は一時停止し、鍵侵害などが確定した場合だけ不可逆に失効します。", certificateItems, certificateManagementCard)}
+      ${managementToolbar({ key: "developer-ca", placeholder: "Developer名、ID、証明書、Bundle ID、Capabilityを検索" })}
+      <div data-card-scope="developer-ca">
+        ${reviewQueueSection("Developerの利用状態", "問題のあるDeveloperは署名発行と既存証明書の利用を即時停止できます。", developerItems, developerManagementCard)}
+        ${reviewQueueSection("追加Developer作成申請", "標準上限を超えるDeveloper作成理由を確認します。", creationItems, (request) => `<article class="card review-item" data-search-card="developer-ca" data-card-search="${escapeHtml([request.requested_display_name, request.reason, request.account_id, request.id].filter(Boolean).join(" ").toLocaleLowerCase("ja"))}"><div class="card__header"><div><h3>${escapeHtml(request.requested_display_name)}</h3><p>${escapeHtml(request.reason)}</p></div><span class="badges">${statusBadge(request.requested_developer_type)}${statusBadge(request.status)}</span></div><div class="card__body"><dl class="detail-list"><div><dt>申請Account</dt><dd><code>${escapeHtml(request.account_id)}</code></dd></div><div><dt>申請日</dt><dd>${formatDate(request.created_at)}</dd></div></dl></div>${decisionForms("creation-requests", request.id, "approve", "作成枠を承認")}</article>`)}
+        ${reviewQueueSection("Developer Certificates", "調査中は一時停止し、鍵侵害などが確定した場合だけ不可逆に失効します。", certificateItems, certificateManagementCard)}
+        <div class="card empty empty--compact" data-card-empty="developer-ca" hidden><h3>条件に一致する管理対象はありません</h3></div>
+      </div>
     `);
   } catch (error) {
     app.innerHTML = shell(`${heading("DEVELOPER CA", "審査一覧を取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-developer-reviews">再試行</button></p></div>`);
+  }
+}
+
+async function renderAuditLogs() {
+  if (!appStoreReviewer && !developerCaReviewer) return renderOverview();
+  document.title = "操作履歴 | mochiOS ID Developer";
+  app.innerHTML = shell(`${heading("ADMINISTRATION", "操作履歴", "管理操作の監査記録を取得しています。")}<div class="card empty"><span class="spinner"></span></div>`);
+  try {
+    const result = await api("/v1/management/audit-logs");
+    const logs = result.audit_logs || [];
+    app.innerHTML = shell(`${heading("ADMINISTRATION", "操作履歴", "成功した管理操作を、操作者と接続情報を含めて確認できます。")}
+      ${adminNavigation("audit")}
+      <section class="card management-panel"><div class="card__header"><div><h2>監査ログ</h2><p>新しい順に最大200件を表示します。監査ログは更新・削除できません。</p></div><span class="queue-count">${logs.length}</span></div>
+        ${managementToolbar({ key: "audit-logs", placeholder: "操作、対象ID、Account ID、IP、Ray IDを検索", filters: [["app_store", "App Store"], ["developer_ca", "Developer CA"]] })}
+        ${logs.length ? `<div class="table-wrap"><table class="table management-table audit-table"><thead><tr><th>操作</th><th>対象</th><th>操作者</th><th>接続情報</th><th>日時</th></tr></thead><tbody>${logs.map((item) => { const service = item.event_type.startsWith("app_store.") ? "app_store" : "developer_ca"; const search = [item.event_type, auditEventLabel(item.event_type), item.resource_id, item.account_id, item.ip_address, item.cf_ray, item.user_agent].filter(Boolean).join(" ").toLocaleLowerCase("ja"); return `<tr data-filter-row="audit-logs" data-filter-state="${escapeHtml(service)}" data-filter-search="${escapeHtml(search)}"><td><strong>${escapeHtml(auditEventLabel(item.event_type))}</strong><small>${escapeHtml(service === "app_store" ? "App Store" : "Developer CA")}</small></td><td><code>${escapeHtml(item.resource_id || "—")}</code></td><td><code>${escapeHtml(item.account_id || "—")}</code></td><td><strong><code>${escapeHtml(item.ip_address || "—")}</code></strong>${item.cf_ray ? `<small>Ray ${escapeHtml(item.cf_ray)}</small>` : ""}${item.user_agent ? `<details><summary>User-Agent</summary><code>${escapeHtml(item.user_agent)}</code></details>` : ""}</td><td>${formatDateTime(item.created_at)}</td></tr>`; }).join("")}<tr data-filter-empty="audit-logs" hidden><td colspan="5"><div class="empty empty--compact"><h3>条件に一致する操作履歴はありません</h3></div></td></tr></tbody></table></div>` : `<div class="empty">${icon("history")}<h3>管理操作はまだありません</h3><p>承認、却下、停止、再開、失効の成功時に記録されます。</p></div>`}
+      </section>`);
+  } catch (error) {
+    app.innerHTML = shell(`${heading("ADMINISTRATION", "操作履歴を取得できません", error.message)}${adminNavigation("audit")}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><button class="button button--secondary" type="button" data-action="reload-audit-logs">再試行</button></p></div>`);
   }
 }
 
@@ -726,6 +826,7 @@ async function renderRoute() {
   detailRequestId += 1;
   if (hash === "#developers") return renderDevelopers();
   if (hash === "#requests") return renderRequests();
+  if (hash === "#admin/audit") return renderAuditLogs();
   if (hash === "#admin") return renderAdmin();
   if (hash === "#developer-reviews") return renderDeveloperReviews();
   if (hash === "#reviews") return renderReviews();
@@ -762,6 +863,33 @@ async function submitForm(form, work) {
   }
 }
 
+function applyManagementFilter(key) {
+  const search = document.querySelector(`[data-table-search="${CSS.escape(key)}"]`);
+  const filter = document.querySelector(`[data-table-filter="${CSS.escape(key)}"]`);
+  const query = String(search?.value || "").trim().toLocaleLowerCase("ja");
+  const state = filter?.value || "all";
+  const rows = [...document.querySelectorAll(`[data-filter-row="${CSS.escape(key)}"]`)];
+  let visibleRows = 0;
+  for (const row of rows) {
+    const visible = (!query || row.dataset.filterSearch.includes(query))
+      && (state === "all" || row.dataset.filterState === state);
+    row.hidden = !visible;
+    if (visible) visibleRows += 1;
+  }
+  const rowEmpty = document.querySelector(`[data-filter-empty="${CSS.escape(key)}"]`);
+  if (rowEmpty) rowEmpty.hidden = visibleRows !== 0;
+
+  const cards = [...document.querySelectorAll(`[data-search-card="${CSS.escape(key)}"]`)];
+  let visibleCards = 0;
+  for (const card of cards) {
+    const visible = !query || card.dataset.cardSearch.includes(query);
+    card.hidden = !visible;
+    if (visible) visibleCards += 1;
+  }
+  const cardEmpty = document.querySelector(`[data-card-empty="${CSS.escape(key)}"]`);
+  if (cardEmpty) cardEmpty.hidden = visibleCards !== 0;
+}
+
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
@@ -772,6 +900,7 @@ document.addEventListener("click", async (event) => {
   }
   if (button.dataset.action === "reload-reviews") await renderReviews();
   if (button.dataset.action === "reload-developer-reviews") await renderDeveloperReviews();
+  if (button.dataset.action === "reload-audit-logs") await renderAuditLogs();
   if (button.dataset.action === "copy-reviewer-command") {
     try {
       await navigator.clipboard.writeText(button.dataset.command || "");
@@ -796,6 +925,16 @@ document.addEventListener("click", async (event) => {
       button.disabled = false;
     }
   }
+});
+
+document.addEventListener("input", (event) => {
+  const key = event.target?.dataset?.tableSearch;
+  if (key) applyManagementFilter(key);
+});
+
+document.addEventListener("change", (event) => {
+  const key = event.target?.dataset?.tableFilter;
+  if (key) applyManagementFilter(key);
 });
 
 document.addEventListener("submit", async (event) => {
