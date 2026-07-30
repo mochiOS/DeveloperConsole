@@ -145,6 +145,11 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
 .table th, .table td { padding: 14px 18px; border-bottom: 1px solid var(--border); text-align: left; font-size: 12px; }
 .table th { color: var(--secondary); font-weight: 620; }
 .table tr:last-child td { border-bottom: 0; }
+.table-link { color: var(--accent); font-weight: 650; }
+.table-link:hover { text-decoration: underline; }
+.row-action { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary); font-weight: 650; white-space: nowrap; }
+.row-action:hover { color: var(--text); }
+.row-action .material-symbols-outlined { font-size: 17px; }
 .inline-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .review-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -8px 0 18px; }
 .review-summary .badges { margin: 0; }

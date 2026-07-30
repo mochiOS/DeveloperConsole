@@ -203,7 +203,7 @@ function navigation() {
   const active = activeRoute();
   const developerLinks = developers.map((developer) => {
     const href = `#developers/${encodeURIComponent(developer.id)}`;
-    return `<a href="${href}" ${window.location.hash === href ? 'aria-current="page"' : ""}>${icon("account_circle")}<span>${escapeHtml(developer.display_name)}</span></a>`;
+    return `<a href="${href}" ${window.location.hash.startsWith(href) ? 'aria-current="page"' : ""}>${icon("account_circle")}<span>${escapeHtml(developer.display_name)}</span></a>`;
   }).join("");
   return `<aside class="sidebar"><p>DEVELOPER</p><nav aria-label="Developerナビゲーション">
     <a href="#overview" ${active === "overview" ? 'aria-current="page"' : ""}>${icon("dashboard")}概要</a>
@@ -229,7 +229,7 @@ function statusBadge(value, kind = "status") {
   const labels = {
     active: "有効", suspended: "停止中", blocked: "停止中", deleted: "削除済み",
     pending: "検証待ち", submitted: "審査待ち", valid: "検証済み", invalid: "検証失敗", verified: "確認済み", rejected: "却下", approved: "承認済み", consumed: "使用済み",
-    draft: "下書き", published: "公開中",
+    draft: "下書き", published: "公開中", app: "アプリ", game: "ゲーム",
     individual: "個人", organization: "組織", owner: "Owner", admin: "Admin", developer: "Developer", viewer: "Viewer",
     invited: "招待中", removed: "削除済み", issued: "発行済み", revoked: "失効済み",
   };
@@ -244,6 +244,10 @@ function developerLink(developer) {
     <span class="developer-card__copy"><strong>${escapeHtml(developer.display_name)}</strong><small>${escapeHtml(developer.id)}</small><span class="badges">${statusBadge(developer.developer_type, "type")}${statusBadge(developer.verification_status, "verification")}</span></span>
     ${icon("chevron_right")}
   </a>`;
+}
+
+function selected(value, expected) {
+  return value === expected ? "selected" : "";
 }
 
 function renderOverview() {
@@ -349,7 +353,7 @@ kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manif
       </div></section>
       ${canPublish ? `<section class="section"><div class="section-title"><h2>App Store</h2></div>
         <section class="card"><div class="card__header"><div><h3>登録済みアプリ</h3><p>MPKG本体は保存せず、GitHub Releases上の固定assetを登録します。</p></div></div>
-          ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Bundle ID</th><th>公開状態</th></tr></thead><tbody>${developerApps.map((item) => `<tr><td>${escapeHtml(item.display_name)}</td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
+          ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Bundle ID</th><th>公開状態</th><th></th></tr></thead><tbody>${developerApps.map((item) => `<tr><td><a class="table-link" href="#developers/${encodeURIComponent(developer.id)}/apps/${encodeURIComponent(item.bundle_id)}">${escapeHtml(item.display_name)}</a></td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td><td><a class="row-action" href="#developers/${encodeURIComponent(developer.id)}/apps/${encodeURIComponent(item.bundle_id)}">管理${icon("chevron_right")}</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
           ${developerReleases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Release ID</th><th>Version</th><th>検証</th><th>審査</th><th>公開</th></tr></thead><tbody>${developerReleases.map((item) => `<tr><td><code>${escapeHtml(item.release_id)}</code><br><small>${escapeHtml(item.bundle_id)}</small></td><td>${escapeHtml(item.version)}</td><td>${statusBadge(item.validation_status)}</td><td>${statusBadge(item.review_status)}</td><td>${statusBadge(item.publish_status)}</td></tr>`).join("")}</tbody></table></div>` : ""}
         </section>
         <div class="publishing-flow">
@@ -362,6 +366,45 @@ kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manif
   } catch (error) {
     if (requestId !== detailRequestId) return;
     app.innerHTML = shell(`${heading("DEVELOPER", "読み込めませんでした", error.message)}<div class="card empty">${icon("error")}<h3>Developer情報を取得できません</h3><p><a class="button button--secondary" href="#developers">一覧へ戻る</a></p></div>`);
+  }
+}
+
+async function renderAppDetail(developerId, bundleId) {
+  const requestId = ++detailRequestId;
+  detailSkeleton();
+  try {
+    const [developerResult, memberResult, appResult, releaseResult] = await Promise.all([
+      api(`/v1/developers/${encodeURIComponent(developerId)}`),
+      api(`/v1/developers/${encodeURIComponent(developerId)}/members`),
+      api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(bundleId)}`),
+      api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(bundleId)}/releases`).catch(() => ({ releases: [] })),
+    ]);
+    if (requestId !== detailRequestId) return;
+    const developer = developerResult.developer;
+    const application = appResult.app;
+    const releases = releaseResult.releases || [];
+    const canEdit = (memberResult.members || []).some((member) => member.account_id === account.id && member.status === "active" && ["owner", "admin", "developer"].includes(member.role));
+    document.title = `${application.display_name} | mochiOS ID Developer`;
+    app.innerHTML = shell(`${heading("APP STORE", application.display_name, application.bundle_id, `<a class="button button--secondary" href="#developers/${encodeURIComponent(developerId)}">Developerへ戻る</a>`)}
+      <section class="card"><div class="card__header"><div><h2>アプリ情報</h2><p>Bundle IDは変更できません。ストアへ表示する情報はいつでも更新できます。</p></div><span class="badges">${statusBadge(application.visibility)}${statusBadge(application.kind)}</span></div>
+        <div class="card__body"><dl class="detail-list"><div><dt>Developer</dt><dd>${escapeHtml(developer.display_name)}</dd></div><div><dt>Bundle ID</dt><dd><code>${escapeHtml(application.bundle_id)}</code></dd></div><div><dt>最終更新</dt><dd>${formatDate(application.updated_at)}</dd></div></dl></div>
+      </section>
+      <section class="section"><div class="section-title"><div><h2>ストア情報を編集</h2><p>保存後、Consoleと公開中のストア情報へ反映されます。</p></div></div>
+        <form class="card" id="app-store-edit-form" data-developer-id="${escapeHtml(developerId)}" data-bundle-id="${escapeHtml(bundleId)}"><div class="card__body form">
+          <div class="form-row"><label class="field"><span>表示名</span><input class="input" name="display_name" value="${escapeHtml(application.display_name)}" maxlength="120" required ${canEdit ? "" : "disabled"}></label><label class="field"><span>種類</span><select class="select" name="kind" ${canEdit ? "" : "disabled"}><option value="app" ${selected(application.kind, "app")}>アプリ</option><option value="game" ${selected(application.kind, "game")}>ゲーム</option></select></label></div>
+          <label class="field"><span>サブタイトル</span><input class="input" name="subtitle" value="${escapeHtml(application.subtitle || "")}" maxlength="160" ${canEdit ? "" : "disabled"}></label>
+          <label class="field"><span>説明</span><textarea class="textarea" name="description" maxlength="4000" ${canEdit ? "" : "disabled"}>${escapeHtml(application.description || "")}</textarea></label>
+          <div class="form-row"><label class="field"><span>アイコンURL</span><input class="input" name="icon_url" type="url" inputmode="url" placeholder="https://example.com/icon.png" value="${escapeHtml(application.icon_url || "")}" ${canEdit ? "" : "disabled"}><small>HTTPSの画像URLを指定してください。</small></label><label class="field"><span>カテゴリ</span><input class="input" name="category" value="${escapeHtml(application.category || "")}" maxlength="80" ${canEdit ? "" : "disabled"}></label></div>
+          <label class="field"><span>年齢区分</span><input class="input" name="age_rating" value="${escapeHtml(application.age_rating || "")}" maxlength="40" ${canEdit ? "" : "disabled"}></label>
+          <span class="field-error" data-error hidden></span>
+        </div><div class="card__footer"><button class="button button--primary" type="submit" ${canEdit ? "" : "disabled"}>変更を保存</button></div></form>
+      </section>
+      <section class="section"><div class="section-title"><div><h2>Releases</h2><p>このアプリに登録されたGitHub Releasesです。</p></div></div><section class="card">
+        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Version</th><th>検証</th><th>審査</th><th>公開</th><th>登録日</th></tr></thead><tbody>${releases.map((item) => `<tr><td>${escapeHtml(item.version)}</td><td>${statusBadge(item.validation_status)}</td><td>${statusBadge(item.review_status)}</td><td>${statusBadge(item.publish_status)}</td><td>${formatDate(item.created_at)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("description")}<h3>Releaseはまだありません</h3><p>DeveloperページからGitHub Releaseを登録できます。</p></div>`}
+      </section></section>`);
+  } catch (error) {
+    if (requestId !== detailRequestId) return;
+    app.innerHTML = shell(`${heading("APP STORE", "アプリを読み込めませんでした", error.message, `<a class="button button--secondary" href="#developers/${encodeURIComponent(developerId)}">Developerへ戻る</a>`)}<div class="card empty">${icon("error")}<h3>アプリ情報を取得できません</h3></div>`);
   }
 }
 
@@ -511,6 +554,12 @@ async function renderDeveloperReviews() {
 async function renderRoute() {
   if (!account) return renderLogin();
   const hash = window.location.hash || "#overview";
+  const appMatch = hash.match(/^#developers\/([^/]+)\/apps\/([^/]+)$/);
+  if (appMatch) {
+    const developerId = decodeURIComponent(appMatch[1]);
+    const bundleId = decodeURIComponent(appMatch[2]);
+    if (developerId && bundleId) return renderAppDetail(developerId, bundleId);
+  }
   if (hash.startsWith("#developers/")) {
     const id = decodeURIComponent(hash.slice("#developers/".length));
     if (id) return renderDeveloperDetail(id);
@@ -630,9 +679,22 @@ document.addEventListener("submit", async (event) => {
     await submitForm(form, async () => {
       const values = formValues(form);
       const developerId = form.dataset.developerId;
-      await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      const result = await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
       showToast("アプリ情報を作成しました");
-      await renderDeveloperDetail(developerId);
+      window.location.hash = `#developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(result.app.bundle_id)}`;
+    });
+  }
+  if (form.id === "app-store-edit-form") {
+    await submitForm(form, async () => {
+      const values = formValues(form);
+      const developerId = form.dataset.developerId;
+      const bundleId = form.dataset.bundleId;
+      for (const name of ["subtitle", "icon_url", "category", "age_rating"]) values[name] = values[name].trim() || null;
+      values.display_name = values.display_name.trim();
+      values.description = values.description.trim();
+      await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(bundleId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      showToast("アプリ情報を更新しました");
+      await renderAppDetail(developerId, bundleId);
     });
   }
   if (form.id === "app-store-release-form") {

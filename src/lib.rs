@@ -708,6 +708,10 @@ async fn route(req: Request, env: Env) -> Result<Response> {
             "/v1/app-store/developers/:developer_id/apps/:bundle_id",
             app_store_developer_proxy,
         )
+        .patch_async(
+            "/v1/app-store/developers/:developer_id/apps/:bundle_id",
+            app_store_developer_proxy,
+        )
         .get_async(
             "/v1/app-store/developers/:developer_id/apps/:bundle_id/releases",
             app_store_developer_proxy,
@@ -808,6 +812,20 @@ mod tests {
         assert!(!app.contains("item.status === \"issued\" || item.status === \"valid\""));
         assert!(!app.contains("name=\"price_label\""));
         assert!(!app.contains("name=\"minimum_mochios_version\""));
+    }
+
+    #[test]
+    fn applications_have_an_editable_detail_page() {
+        let source = include_str!("lib.rs");
+        let app = include_str!("../public/assets/app.js");
+        assert!(source.contains(".patch_async("));
+        assert!(source.contains("/v1/app-store/developers/:developer_id/apps/:bundle_id"));
+        assert!(app.contains("renderAppDetail(developerId, bundleId)"));
+        assert!(app.contains("id=\"app-store-edit-form\""));
+        assert!(app.contains("method: \"PATCH\""));
+        assert!(app.contains("ストア情報を編集"));
+        let index = include_str!("../public/index.html");
+        assert!(index.contains("account_circle,add,apps,badge"));
     }
 
     #[test]
