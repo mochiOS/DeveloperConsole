@@ -811,6 +811,16 @@ mod tests {
     }
 
     #[test]
+    fn strict_csp_is_not_bypassed_by_cloudflare_html_injection() {
+        let headers = include_str!("../public/_headers");
+        assert!(
+            headers.contains("Cache-Control: public, max-age=0, must-revalidate, no-transform")
+        );
+        assert!(headers.contains("script-src 'self'"));
+        assert!(!headers.contains("'unsafe-inline'"));
+    }
+
+    #[test]
     fn developer_ca_upstream_uses_only_signed_bearer_tokens() {
         let source = include_str!("upstream.rs");
         let developer_ca = source
