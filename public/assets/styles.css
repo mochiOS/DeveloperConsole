@@ -150,6 +150,11 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
 .row-action { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary); font-weight: 650; white-space: nowrap; }
 .row-action:hover { color: var(--text); }
 .row-action .material-symbols-outlined { font-size: 17px; }
+.certificate-name-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 7px; align-items: center; min-width: 290px; }
+.certificate-name-form .field-error { grid-column: 1 / -1; }
+.input--compact { height: 36px; }
+.button--compact { min-height: 36px; padding: 7px 11px; }
+.certificate-id { display: block; margin-top: 7px; color: var(--tertiary); }
 .inline-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .review-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -8px 0 18px; }
 .review-summary .badges { margin: 0; }

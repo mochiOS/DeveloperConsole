@@ -52,6 +52,21 @@ function certificateScopes(item) {
   return Array.isArray(scopes) ? scopes.filter((scope) => typeof scope === "string") : [];
 }
 
+function certificateDisplayName(item) {
+  const name = String(item?.display_name || "").trim();
+  const serial = item?.serial_number || certificateContent(item).serial_number || "—";
+  return name || `Certificate ${serial}`;
+}
+
+function certificateTableRow(item, developerId, canManage) {
+  const certificateId = item.certificate_id || item.id;
+  const name = certificateDisplayName(item);
+  const nameCell = canManage
+    ? `<form class="certificate-name-form" data-developer-id="${escapeHtml(developerId)}" data-certificate-id="${escapeHtml(certificateId)}"><input class="input input--compact" name="display_name" value="${escapeHtml(name)}" maxlength="80" aria-label="証明書名" required><button class="button button--secondary button--compact" type="submit">保存</button><span class="field-error" data-error hidden></span></form>`
+    : `<strong>${escapeHtml(name)}</strong>`;
+  return `<tr><td>${nameCell}<small class="certificate-id"><code>${escapeHtml(certificateId)}</code></small></td><td>${statusBadge(item.status)}</td><td>${formatDate(certificateContent(item).not_after || item.not_after)}</td></tr>`;
+}
+
 function scopeAllowsBundleId(scope, bundleId) {
   return scope === bundleId || (scope.endsWith(".*") && bundleId.startsWith(scope.slice(0, -1)));
 }
@@ -64,7 +79,7 @@ function activeCertificateOptions(certificates) {
       const id = item.certificate_id || item.id;
       const scopes = certificateScopes(item);
       const serial = item.serial_number || certificateContent(item).serial_number || "—";
-      return `<option value="${escapeHtml(id)}" data-scopes="${escapeHtml(scopes.join(" "))}">serial ${escapeHtml(serial)} · ${escapeHtml(scopes.join(", ") || "scopeなし")}</option>`;
+      return `<option value="${escapeHtml(id)}" data-scopes="${escapeHtml(scopes.join(" "))}">${escapeHtml(certificateDisplayName(item))} · serial ${escapeHtml(serial)} · ${escapeHtml(scopes.join(", ") || "scopeなし")}</option>`;
     })
     .join("");
 }
@@ -345,7 +360,7 @@ async function renderDeveloperDetail(developerId) {
       </div></section>
       <section class="section"><div class="section-title"><h2>Developer Certificates</h2></div><div class="grid">
         <section class="card"><div class="card__header"><div><h3>登録済み証明書</h3><p>Developer IDに結び付いた署名証明書です。</p></div></div>
-          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>証明書</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => `<tr><td><code>${escapeHtml(item.certificate_id || item.id)}</code></td><td>${statusBadge(item.status)}</td><td>${formatDate((item.certificate_details || item.certificate)?.content?.not_after || item.not_after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>Kome CLIで署名すると必要なDeveloper Certificateが自動発行されます。</p></div>`}
+          ${certificates.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>名前と証明書ID</th><th>状態</th><th>有効期限</th></tr></thead><tbody>${certificates.map((item) => certificateTableRow(item, developer.id, canPublish)).join("")}</tbody></table></div>` : `<div class="empty">${icon("key")}<h3>証明書はありません</h3><p>Kome CLIで署名すると必要なDeveloper Certificateが自動発行されます。</p></div>`}
         </section>
         <section class="card"><div class="card__header"><div><h3>Kome CLIで署名</h3><p>公開鍵、秘密鍵、MPKGはブラウザへアップロードしません。</p></div></div><div class="card__body"><p>初回は次を実行してください。</p><pre><code>kome login
 kome keygen
@@ -663,6 +678,16 @@ document.addEventListener("submit", async (event) => {
       const developerId = form.dataset.developerId;
       await api(`/v1/developers/${encodeURIComponent(developerId)}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
       showToast("メンバーを追加しました");
+      await renderDeveloperDetail(developerId);
+    });
+  }
+  if (form.classList.contains("certificate-name-form")) {
+    await submitForm(form, async () => {
+      const values = formValues(form);
+      const developerId = form.dataset.developerId;
+      const certificateId = form.dataset.certificateId;
+      await api(`/v1/developers/${encodeURIComponent(developerId)}/certificates/${encodeURIComponent(certificateId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ display_name: values.display_name.trim() }) });
+      showToast("証明書名を更新しました");
       await renderDeveloperDetail(developerId);
     });
   }

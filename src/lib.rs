@@ -681,6 +681,10 @@ async fn route(req: Request, env: Env) -> Result<Response> {
         .get_async("/v1/developer-creation-requests", proxy_route)
         .post_async("/v1/developer-creation-requests", proxy_route)
         .get_async("/v1/developers/:developer_id/certificates", proxy_route)
+        .patch_async(
+            "/v1/developers/:developer_id/certificates/:certificate_id",
+            proxy_route,
+        )
         .get_async("/v1/certificates/:certificate_id", proxy_route)
         .get_async("/v1/developer-reviews", developer_review_queue)
         .post_async(
@@ -812,6 +816,16 @@ mod tests {
         assert!(!app.contains("item.status === \"issued\" || item.status === \"valid\""));
         assert!(!app.contains("name=\"price_label\""));
         assert!(!app.contains("name=\"minimum_mochios_version\""));
+    }
+
+    #[test]
+    fn developer_certificates_have_editable_display_names() {
+        let source = include_str!("lib.rs");
+        let app = include_str!("../public/assets/app.js");
+        assert!(source.contains("/v1/developers/:developer_id/certificates/:certificate_id"));
+        assert!(app.contains("certificate-name-form"));
+        assert!(app.contains("証明書名を更新しました"));
+        assert!(app.contains("item.display_name"));
     }
 
     #[test]
