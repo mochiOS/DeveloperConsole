@@ -209,8 +209,7 @@ function activeRoute() {
   const hash = window.location.hash || "#overview";
   if (hash.startsWith("#developers")) return "developers";
   if (hash === "#requests") return "requests";
-  if (hash === "#developer-reviews") return "developer-reviews";
-  if (hash.startsWith("#reviews")) return "reviews";
+  if (hash === "#admin" || hash === "#developer-reviews" || hash.startsWith("#reviews")) return "admin";
   return "overview";
 }
 
@@ -225,8 +224,7 @@ function navigation() {
     <a href="#developers" ${window.location.hash === "#developers" ? 'aria-current="page"' : ""}>${icon("badge")}Developers</a>
     ${developerLinks}
     <a href="#requests" ${active === "requests" ? 'aria-current="page"' : ""}>${icon("description")}追加申請</a>
-    ${developerCaReviewer ? `<a href="#developer-reviews" ${active === "developer-reviews" ? 'aria-current="page"' : ""}>${icon("security")}Developer管理</a>` : ""}
-    ${appStoreReviewer ? `<a href="#reviews" ${active === "reviews" ? 'aria-current="page"' : ""}>${icon("fact_check")}App審査</a>` : ""}
+    ${appStoreReviewer || developerCaReviewer ? `<a href="#admin" ${active === "admin" ? 'aria-current="page"' : ""}>${icon("admin_panel_settings")}管理</a>` : ""}
   </nav><div class="sidebar__account"><p>MOCHIOS ID</p><nav>
     <a href="https://accounts.mochios.org/#account" target="_blank" rel="noopener noreferrer">${icon("settings")}Account設定</a>
   </nav></div></aside>`;
@@ -428,6 +426,134 @@ function reviewSkeleton(title = "審査を読み込み中") {
     <div class="card empty"><span class="spinner"></span></div>`);
 }
 
+function adminServiceCard({ iconName, title, role, description, metrics, href, buttonLabel }) {
+  return `<article class="card admin-service">
+    <div class="card__header"><span class="admin-service__icon">${icon(iconName)}</span><div><p class="admin-service__role">${escapeHtml(role)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div></div>
+    <div class="card__body admin-service__metrics">${metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+    <div class="card__footer"><a class="button button--primary" href="${escapeHtml(href)}">${escapeHtml(buttonLabel)}${icon("chevron_right")}</a></div>
+  </article>`;
+}
+
+function adminVisibilityRow(title, visible, hidden, action) {
+  return `<div class="admin-visibility__row"><strong>${escapeHtml(title)}</strong><div><span>表示されるもの</span><p>${escapeHtml(visible)}</p></div><div><span>表示されないもの</span><p>${escapeHtml(hidden)}</p></div><div><span>操作できる条件</span><p>${escapeHtml(action)}</p></div></div>`;
+}
+
+function reviewerCommand(releaseId) {
+  return `cargo run --release --manifest-path reviewer/Cargo.toml -- ${releaseId}`;
+}
+
+function reviewerAction(release) {
+  const command = reviewerCommand(release.release_id);
+  return `<article class="admin-action">
+    <div><strong>${escapeHtml(release.display_name || release.bundle_id)} ${escapeHtml(release.version)}</strong><small><code>${escapeHtml(release.release_id)}</code></small></div>
+    <code class="admin-command">${escapeHtml(command)}</code>
+    <button class="button button--secondary button--compact" type="button" data-action="copy-reviewer-command" data-command="${escapeHtml(command)}">${icon("content_copy")}コマンドをコピー</button>
+  </article>`;
+}
+
+async function renderAdmin() {
+  if (!appStoreReviewer && !developerCaReviewer) return renderOverview();
+  document.title = "管理 | mochiOS ID Developer";
+  app.innerHTML = shell(`${heading("ADMINISTRATION", "管理", "運営権限、処理待ちの項目、表示範囲を確認しています。")}<div class="card empty"><span class="spinner"></span></div>`);
+
+  const appStoreRequest = appStoreReviewer
+    ? api("/v1/app-store/reviews")
+      .then((result) => ({ releases: result.releases || [] }))
+      .catch((error) => ({ error }))
+    : Promise.resolve(null);
+  const developerRequest = developerCaReviewer
+    ? api("/v1/developer-reviews").catch((error) => ({ error }))
+    : Promise.resolve(null);
+  const [appStoreData, developerData] = await Promise.all([appStoreRequest, developerRequest]);
+
+  const serviceCards = [];
+  if (appStoreReviewer) {
+    const releases = appStoreData?.releases || [];
+    serviceCards.push(adminServiceCard({
+      iconName: "fact_check",
+      title: "App Store",
+      role: "APP STORE ADMIN",
+      description: appStoreData?.error ? `取得できません: ${appStoreData.error.message}` : "提出されたReleaseの機械検証と公開審査を管理します。",
+      metrics: [
+        ["機械検証待ち", releases.filter((item) => item.validation_status === "pending").length],
+        ["審査可能", releases.filter((item) => item.validation_status === "valid" && item.review_status === "submitted" && item.publish_status === "draft").length],
+        ["検証失敗", releases.filter((item) => item.validation_status === "invalid").length],
+      ],
+      href: "#reviews",
+      buttonLabel: "App Storeを管理",
+    }));
+  }
+  if (developerCaReviewer) {
+    const developerItems = developerData?.developers || [];
+    const creationItems = developerData?.developer_creation_requests || [];
+    const certificateItems = developerData?.certificates || [];
+    serviceCards.push(adminServiceCard({
+      iconName: "security",
+      title: "Developer CA",
+      role: "DEVELOPER CA ADMIN",
+      description: developerData?.error ? `取得できません: ${developerData.error.message}` : "Developer、追加作成申請、署名証明書を管理します。",
+      metrics: [
+        ["Developer", developerItems.length],
+        ["追加作成申請", creationItems.length],
+        ["管理対象証明書", certificateItems.length],
+      ],
+      href: "#developer-reviews",
+      buttonLabel: "Developer CAを管理",
+    }));
+  }
+
+  const visibilityRows = [
+    appStoreReviewer ? adminVisibilityRow(
+      "App Store Release",
+      "公開前で、機械検証待ちまたは審査待ちのRelease。",
+      "公開済み、承認済み、却下済みなど、処理が完了したRelease。",
+      "検証済み・審査待ち・下書きの3条件を満たすReleaseだけ承認または却下できます。",
+    ) : "",
+    appStoreReviewer ? adminVisibilityRow(
+      "App Store Package",
+      "公開中または停止中のPackage。",
+      "まだ公開されたReleaseがないPackage。",
+      "公開中のPackageは停止でき、停止中のPackageは再開できます。",
+    ) : "",
+    developerCaReviewer ? adminVisibilityRow(
+      "Developer",
+      "有効または停止中のDeveloper。",
+      "削除済みのDeveloper。",
+      "有効なDeveloperは停止でき、停止中のDeveloperは再開できます。",
+    ) : "",
+    developerCaReviewer ? adminVisibilityRow(
+      "追加作成申請・証明書",
+      "審査待ちの追加作成申請と、有効または一時停止中の証明書。",
+      "処理済みの追加作成申請と失効済みの証明書。",
+      "申請は承認・却下、証明書は一時停止・再開・失効ができます。",
+    ) : "",
+  ].join("");
+
+  const releases = appStoreData?.releases || [];
+  const validationPending = releases.filter((item) => item.validation_status === "pending");
+  const reviewReady = releases.filter((item) => item.validation_status === "valid" && item.review_status === "submitted" && item.publish_status === "draft");
+  const validationFailed = releases.filter((item) => item.validation_status === "invalid");
+  const creationPending = developerData?.developer_creation_requests || [];
+  const nextActions = [
+    ...validationPending.map(reviewerAction),
+    ...reviewReady.map((release) => `<article class="admin-action"><div><strong>${escapeHtml(release.display_name || release.bundle_id)} ${escapeHtml(release.version)}</strong><small>MPKG検証済み · 内容審査が必要です</small></div><a class="button button--primary button--compact" href="#reviews/${encodeURIComponent(release.release_id)}">審査する${icon("chevron_right")}</a></article>`),
+    ...validationFailed.map((release) => `<article class="admin-action"><div><strong>${escapeHtml(release.display_name || release.bundle_id)} ${escapeHtml(release.version)}</strong><small>MPKGの機械検証に失敗しています</small></div><a class="button button--secondary button--compact" href="#reviews/${encodeURIComponent(release.release_id)}">結果を確認${icon("chevron_right")}</a></article>`),
+    ...(developerCaReviewer && creationPending.length ? [`<article class="admin-action"><div><strong>追加Developer作成申請</strong><small>${creationPending.length}件の申請が審査を待っています</small></div><a class="button button--primary button--compact" href="#developer-reviews">申請を確認${icon("chevron_right")}</a></article>`] : []),
+  ];
+
+  app.innerHTML = shell(`${heading("ADMINISTRATION", "管理", "このページは運営権限を持つアカウントだけに表示されます。")}
+    <section class="admin-access" aria-label="付与されている管理権限">
+      <div class="section-title"><div><h2>あなたの管理権限</h2><p>付与されていないサービスの管理画面やデータは表示されません。</p></div><span class="queue-count">${serviceCards.length}</span></div>
+      <div class="grid admin-services">${serviceCards.join("")}</div>
+    </section>
+    <section class="section"><div class="section-title"><div><h2>次に行うこと</h2><p>現在、管理者による処理が必要な項目です。</p></div><span class="queue-count">${nextActions.length}</span></div>
+      <div class="card admin-actions">${nextActions.length ? nextActions.join("") : `<div class="empty">${icon("check_circle")}<h3>必要な作業はありません</h3><p>新しい提出や申請が届くと、ここに次の操作が表示されます。</p></div>`}</div>
+    </section>
+    <section class="section"><div class="section-title"><div><h2>管理画面の表示ルール</h2><p>一覧に出る項目と、一覧から除外される項目を状態別に示します。</p></div></div>
+      <div class="card admin-visibility">${visibilityRows}</div>
+    </section>`);
+}
+
 async function renderReviews() {
   if (!appStoreReviewer) return renderOverview();
   reviewSkeleton();
@@ -449,7 +575,7 @@ async function renderReviews() {
         <article class="metric"><span>審査可能</span><strong>${reviewReady}</strong></article>
       </section>
       <section class="card"><div class="card__header"><div><h2>提出済みRelease</h2><p>機械検証待ちを含む、公開判断が完了していないReleaseです。</p></div></div>
-        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>審査</th><th>登録／提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${statusBadge(release.review_status)}</td><td>${formatDate(release.submitted_at || release.created_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">状態を確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>処理中のReleaseはありません</h3><p>App Storeへ提出されたReleaseがここに表示されます。</p></div>`}
+        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>審査</th><th>登録／提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code><br><small><code>${escapeHtml(release.release_id)}</code></small></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${statusBadge(release.review_status)}</td><td>${formatDate(release.submitted_at || release.created_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">状態を確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>処理中のReleaseはありません</h3><p>App Storeへ提出されたReleaseがここに表示されます。</p></div>`}
       </section>
       ${reviewQueueSection("パッケージの公開制御", "問題のあるパッケージは全Releaseを即時停止し、調査後に再開できます。", packages, packageManagementCard)}`);
   } catch (error) {
@@ -494,6 +620,7 @@ async function renderReviewDetail(releaseId) {
       </section>
       <section class="card"><div class="card__header"><div><h2>Release情報</h2><p>登録時に固定されたGitHub assetとパッケージmetadataです。</p></div></div>
         <div class="card__body"><dl class="detail-list">
+          <div><dt>Release ID</dt><dd><code>${escapeHtml(release.release_id)}</code></dd></div>
           <div><dt>Bundle ID</dt><dd><code>${escapeHtml(release.bundle_id)}</code></dd></div>
           <div><dt>Version</dt><dd>${escapeHtml(release.version)}</dd></div>
           <div><dt>Repository</dt><dd>${escapeHtml(release.github_repository)}</dd></div>
@@ -511,6 +638,7 @@ async function renderReviewDetail(releaseId) {
           <div><dt>変更内容</dt><dd class="pre-wrap">${escapeHtml(release.changelog || "—")}</dd></div>
         </dl></div>
       </section>
+      ${release.validation_status === "pending" ? `<section class="section card"><div class="card__header"><div><h2>次に行うこと</h2><p>AppStoreディレクトリでReviewer CLIを実行してください。</p></div></div><div class="card__body reviewer-command"><code>${escapeHtml(reviewerCommand(release.release_id))}</code><button class="button button--secondary button--compact" type="button" data-action="copy-reviewer-command" data-command="${escapeHtml(reviewerCommand(release.release_id))}">${icon("content_copy")}コマンドをコピー</button></div></section>` : ""}
       ${actionable ? `<section class="section grid review-actions">
         <form class="card" id="review-approve-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>承認して公開</h3><p>承認するとストアへ即時公開されます。</p></div></div><div class="card__body form"><label class="confirm-field"><input type="checkbox" name="confirmed" required><span>検証値とアプリ内容を確認しました</span></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">承認して公開</button></div></form>
         <form class="card" id="review-reject-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>却下</h3><p>固定理由を選び、必要なら補足します。</p></div></div><div class="card__body form"><label class="field"><span>却下理由</span><select class="input" name="reason_code" required><option value="">選択してください</option><option value="metadata_incorrect">Metadataが不正確</option><option value="misleading_description">説明が誤解を招く</option><option value="malicious_behavior">悪意ある動作</option><option value="policy_violation">ポリシー違反</option><option value="duplicate_application">重複アプリ</option><option value="broken_application">動作不能</option><option value="other">その他</option></select></label><label class="field"><span>補足（任意）</span><textarea class="textarea" name="note" maxlength="2000"></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--danger" type="submit">Releaseを却下</button></div></form>
@@ -598,6 +726,7 @@ async function renderRoute() {
   detailRequestId += 1;
   if (hash === "#developers") return renderDevelopers();
   if (hash === "#requests") return renderRequests();
+  if (hash === "#admin") return renderAdmin();
   if (hash === "#developer-reviews") return renderDeveloperReviews();
   if (hash === "#reviews") return renderReviews();
   renderOverview();
@@ -643,6 +772,14 @@ document.addEventListener("click", async (event) => {
   }
   if (button.dataset.action === "reload-reviews") await renderReviews();
   if (button.dataset.action === "reload-developer-reviews") await renderDeveloperReviews();
+  if (button.dataset.action === "copy-reviewer-command") {
+    try {
+      await navigator.clipboard.writeText(button.dataset.command || "");
+      showToast("Reviewerコマンドをコピーしました");
+    } catch {
+      showToast("コマンドをコピーできませんでした", "ブラウザのクリップボード権限を確認してください。", "error");
+    }
+  }
   if (button.dataset.action === "logout") {
     button.disabled = true;
     try {

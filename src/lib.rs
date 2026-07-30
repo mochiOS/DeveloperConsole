@@ -834,6 +834,23 @@ mod tests {
     }
 
     #[test]
+    fn administrator_features_have_a_dedicated_entry_page() {
+        let app = include_str!("../public/assets/app.js");
+        assert!(app.contains("href=\"#admin\""));
+        assert!(app.contains("async function renderAdmin()"));
+        assert!(app.contains("あなたの管理権限"));
+        assert!(app.contains("管理画面の表示ルール"));
+        assert!(app.contains("次に行うこと"));
+        assert!(app.contains("表示されるもの"));
+        assert!(app.contains("表示されないもの"));
+        assert!(app.contains("copy-reviewer-command"));
+        assert!(app.contains("reviewerCommand(release.release_id)"));
+        assert!(app.contains("appStoreReviewer || developerCaReviewer"));
+        assert!(!app.contains(">${icon(\"security\")}Developer管理</a>"));
+        assert!(!app.contains(">${icon(\"fact_check\")}App審査</a>"));
+    }
+
+    #[test]
     fn developer_certificates_have_editable_display_names() {
         let source = include_str!("lib.rs");
         let app = include_str!("../public/assets/app.js");
