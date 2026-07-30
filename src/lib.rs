@@ -816,7 +816,8 @@ mod tests {
         assert!(!app.contains("item.status === \"issued\" || item.status === \"valid\""));
         assert!(!app.contains("name=\"price_label\""));
         assert!(!app.contains("name=\"minimum_mochios_version\""));
-        assert!(app.contains("審査が完了するまでお待ちください。"));
+        assert!(app.contains("GitHub Releaseを登録しました。"));
+        assert!(!app.contains("審査が完了するまでお待ちください。"));
         assert!(!app.contains("Reviewer検証を実行してください"));
     }
 
