@@ -5,7 +5,7 @@
 3. 初回だけ`kome login`でブラウザ承認し、`kome keygen`で`.key`と`.pub`を生成する
 4. `kome sign`でmanifestを読み、Developer Certificateを取得してMPKGへ署名する
 5. 署名済みMPKGを固定tagのGitHub Release assetへ公開する
-6. ConsoleのDeveloper詳細でPackage ID、表示情報、repository、tag、asset名、Certificate IDを登録する
+6. ConsoleのDeveloper詳細でBundle IDを予約し、プルダウンからアプリと有効なCertificateを選び、repository、tag、asset名を登録する
 7. MPKG Reviewerの検証後、Console審査を通過したReleaseだけがStoreへ公開される
 
 ```powershell

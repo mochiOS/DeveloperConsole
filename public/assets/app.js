@@ -43,6 +43,82 @@ function formatBytes(value) {
   return `${size.toFixed(size >= 10 ? 1 : 2)} ${unit}`;
 }
 
+function certificateContent(item) {
+  return item?.certificate_details?.content || {};
+}
+
+function certificateScopes(item) {
+  const scopes = certificateContent(item).package_id_scopes;
+  return Array.isArray(scopes) ? scopes.filter((scope) => typeof scope === "string") : [];
+}
+
+function scopeAllowsBundleId(scope, bundleId) {
+  return scope === bundleId || (scope.endsWith(".*") && bundleId.startsWith(scope.slice(0, -1)));
+}
+
+function activeCertificateOptions(certificates) {
+  const now = Math.floor(Date.now() / 1000);
+  return certificates
+    .filter((item) => item.status === "active" && Number(item.not_after || certificateContent(item).not_after) > now)
+    .map((item) => {
+      const id = item.certificate_id || item.id;
+      const scopes = certificateScopes(item);
+      const serial = item.serial_number || certificateContent(item).serial_number || "—";
+      return `<option value="${escapeHtml(id)}" data-scopes="${escapeHtml(scopes.join(" "))}">serial ${escapeHtml(serial)} · ${escapeHtml(scopes.join(", ") || "scopeなし")}</option>`;
+    })
+    .join("");
+}
+
+function initializePublishingForms() {
+  const appSelect = document.querySelector("#app-store-create-form select[name='bundle_id']");
+  const displayName = document.querySelector("#app-store-create-form input[name='display_name']");
+  const releaseSelect = document.querySelector("#app-store-release-form select[name='bundle_id']");
+  const certificateSelect = document.querySelector("#app-store-release-form select[name='certificate_id']");
+  const certificateHelp = document.querySelector("[data-certificate-help]");
+  const versionInput = document.querySelector("#app-store-release-form input[name='version']");
+  const tagInput = document.querySelector("#app-store-release-form input[name='release_tag']");
+
+  const fillDisplayName = () => {
+    const option = appSelect?.selectedOptions[0];
+    if (option?.dataset.appName && displayName && !displayName.value) displayName.value = option.dataset.appName;
+  };
+  appSelect?.addEventListener("change", fillDisplayName);
+  fillDisplayName();
+
+  const filterCertificates = () => {
+    if (!releaseSelect || !certificateSelect) return;
+    const bundleId = releaseSelect.value;
+    let available = 0;
+    for (const option of [...certificateSelect.options].slice(1)) {
+      const allowed = Boolean(bundleId) && option.dataset.scopes.split(" ").some((scope) => scopeAllowsBundleId(scope, bundleId));
+      option.hidden = !allowed;
+      option.disabled = !allowed;
+      if (allowed) available += 1;
+    }
+    if (certificateSelect.selectedOptions[0]?.disabled) certificateSelect.value = "";
+    if (available === 1 && !certificateSelect.value) {
+      const option = [...certificateSelect.options].find((item) => item.value && !item.disabled);
+      if (option) certificateSelect.value = option.value;
+    }
+    if (certificateHelp) {
+      certificateHelp.textContent = !bundleId
+        ? "先にBundle IDを選択してください。"
+        : available
+          ? `${available}件の有効な証明書を利用できます。`
+          : "このBundle IDを署名できる有効な証明書がありません。先にkome signを実行してください。";
+    }
+  };
+  releaseSelect?.addEventListener("change", filterCertificates);
+  filterCertificates();
+
+  let generatedTag = "";
+  versionInput?.addEventListener("input", () => {
+    if (!tagInput || (tagInput.value && tagInput.value !== generatedTag)) return;
+    generatedTag = versionInput.value ? `v${versionInput.value}` : "";
+    tagInput.value = generatedTag;
+  });
+}
+
 function githubDownloadUrl(value) {
   try {
     const url = new URL(String(value));
@@ -236,16 +312,19 @@ async function renderDeveloperDetail(developerId) {
   const requestId = ++detailRequestId;
   detailSkeleton();
   try {
-    const [developerResult, memberResult, certificateResult, appStoreResult] = await Promise.all([
+    const [developerResult, memberResult, certificateResult, bundleResult, appStoreResult] = await Promise.all([
       api(`/v1/developers/${encodeURIComponent(developerId)}`),
       api(`/v1/developers/${encodeURIComponent(developerId)}/members`),
       api(`/v1/developers/${encodeURIComponent(developerId)}/certificates`),
+      api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/bundle-ids`),
       api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps`).catch(() => ({ apps: [] })),
     ]);
     if (requestId !== detailRequestId) return;
     const developer = developerResult.developer;
     const members = memberResult.members || [];
     const certificates = certificateResult.certificates || [];
+    const bundleIds = bundleResult.bundle_ids || [];
+    const reservedBundleIds = bundleIds.filter((item) => item.status === "reserved");
     const developerApps = appStoreResult.apps || [];
     const releaseResults = await Promise.all(developerApps.map((item) => api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/apps/${encodeURIComponent(item.bundle_id)}/releases`).catch(() => ({ releases: [] }))));
     const developerReleases = releaseResults.flatMap((result) => result.releases || []);
@@ -270,15 +349,16 @@ kome sign</code></pre><p>2回目以降は<code>kome sign</code>だけで、manif
       </div></section>
       ${canPublish ? `<section class="section"><div class="section-title"><h2>App Store</h2></div>
         <section class="card"><div class="card__header"><div><h3>登録済みアプリ</h3><p>MPKG本体は保存せず、GitHub Releases上の固定assetを登録します。</p></div></div>
-          ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Package ID</th><th>公開状態</th></tr></thead><tbody>${developerApps.map((item) => `<tr><td>${escapeHtml(item.display_name)}</td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
+          ${developerApps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>Bundle ID</th><th>公開状態</th></tr></thead><tbody>${developerApps.map((item) => `<tr><td>${escapeHtml(item.display_name)}</td><td><code>${escapeHtml(item.bundle_id)}</code></td><td>${statusBadge(item.visibility)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("apps")}<h3>アプリは未登録です</h3></div>`}
           ${developerReleases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Release ID</th><th>Version</th><th>検証</th><th>審査</th><th>公開</th></tr></thead><tbody>${developerReleases.map((item) => `<tr><td><code>${escapeHtml(item.release_id)}</code><br><small>${escapeHtml(item.bundle_id)}</small></td><td>${escapeHtml(item.version)}</td><td>${statusBadge(item.validation_status)}</td><td>${statusBadge(item.review_status)}</td><td>${statusBadge(item.publish_status)}</td></tr>`).join("")}</tbody></table></div>` : ""}
         </section>
-        <div class="grid">
-          <form class="card" id="app-store-reserve-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>1. Package IDを予約</h3></div></div><div class="card__body form"><label class="field"><span>Package ID</span><input class="input" name="bundle_id" placeholder="com.example.testapp" required></label><label class="field"><span>アプリ名</span><input class="input" name="app_name" required></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">予約</button></div></form>
-          <form class="card" id="app-store-create-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>2. アプリ情報を作成</h3></div></div><div class="card__body form"><label class="field"><span>予約済みPackage ID</span><input class="input" name="bundle_id" required></label><label class="field"><span>表示名</span><input class="input" name="display_name" required></label><label class="field"><span>説明</span><textarea class="textarea" name="description" maxlength="4000"></textarea></label><div class="form-row"><label class="field"><span>種類</span><select class="select" name="kind"><option value="app">アプリ</option><option value="game">ゲーム</option></select></label><label class="field"><span>価格表示</span><input class="input" name="price_label" value="入手" required></label></div><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">アプリを作成</button></div></form>
+        <div class="publishing-flow">
+          <form class="card publishing-step" id="app-store-reserve-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><span class="step-number">1</span><div><h3>Bundle IDを予約</h3><p>アプリを一意に識別する逆ドメイン形式のIDです。</p></div></div><div class="card__body form"><div class="form-row"><label class="field"><span>Bundle ID</span><input class="input" name="bundle_id" placeholder="com.example.testapp" autocomplete="off" required></label><label class="field"><span>アプリ名</span><input class="input" name="app_name" required></label></div><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit">Bundle IDを予約</button></div></form>
+          <form class="card publishing-step" id="app-store-create-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><span class="step-number">2</span><div><h3>アプリ情報を作成</h3><p>予約済みBundle IDを選択します。IDを再入力する必要はありません。</p></div></div><div class="card__body form"><label class="field"><span>予約済みBundle ID</span><select class="select" name="bundle_id" required ${reservedBundleIds.length ? "" : "disabled"}><option value="">${reservedBundleIds.length ? "選択してください" : "予約済みBundle IDがありません"}</option>${reservedBundleIds.map((item) => `<option value="${escapeHtml(item.bundle_id)}" data-app-name="${escapeHtml(item.app_name)}">${escapeHtml(item.bundle_id)} · ${escapeHtml(item.app_name)}</option>`).join("")}</select></label><div class="form-row"><label class="field"><span>表示名</span><input class="input" name="display_name" required ${reservedBundleIds.length ? "" : "disabled"}></label><label class="field"><span>種類</span><select class="select" name="kind" ${reservedBundleIds.length ? "" : "disabled"}><option value="app">アプリ</option><option value="game">ゲーム</option></select></label></div><label class="field"><span>説明</span><textarea class="textarea" name="description" maxlength="4000" ${reservedBundleIds.length ? "" : "disabled"}></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--secondary" type="submit" ${reservedBundleIds.length ? "" : "disabled"}>アプリ情報を作成</button></div></form>
+          <form class="card publishing-step" id="app-store-release-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><span class="step-number">3</span><div><h3>GitHub Releaseを登録</h3><p>作成済みアプリと署名に使った証明書を選び、固定tagの<code>.mpkg</code>を登録します。</p></div></div><div class="card__body form"><div class="form-row"><label class="field"><span>Bundle ID</span><select class="select" name="bundle_id" required ${developerApps.length ? "" : "disabled"}><option value="">${developerApps.length ? "選択してください" : "先にアプリ情報を作成してください"}</option>${developerApps.map((item) => `<option value="${escapeHtml(item.bundle_id)}">${escapeHtml(item.display_name)} · ${escapeHtml(item.bundle_id)}</option>`).join("")}</select></label><label class="field"><span>Version</span><input class="input" name="version" placeholder="0.1.0" required ${developerApps.length ? "" : "disabled"}></label></div><div class="form-row"><label class="field"><span>Repository</span><input class="input" name="repository" placeholder="owner/repository" required ${developerApps.length ? "" : "disabled"}></label><label class="field"><span>Release tag</span><input class="input" name="release_tag" placeholder="v0.1.0" required ${developerApps.length ? "" : "disabled"}></label></div><div class="form-row"><label class="field"><span>MPKG asset名</span><input class="input" name="asset" placeholder="TestApp.mpkg" required ${developerApps.length ? "" : "disabled"}></label><label class="field"><span>Developer Certificate</span><select class="select" name="certificate_id" required ${developerApps.length ? "" : "disabled"}><option value="">選択してください</option>${activeCertificateOptions(certificates)}</select><small data-certificate-help>Bundle IDに対応する有効な証明書だけを表示します。</small></label></div><label class="field"><span>変更内容（任意）</span><textarea class="textarea" name="changelog" maxlength="4000" ${developerApps.length ? "" : "disabled"}></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit" ${developerApps.length ? "" : "disabled"}>Releaseを登録</button></div></form>
         </div>
-        <form class="card" id="app-store-release-form" data-developer-id="${escapeHtml(developer.id)}"><div class="card__header"><div><h3>3. GitHub Releaseを登録</h3><p>公開済みReleaseと完全一致する<code>.mpkg</code> assetを指定してください。</p></div></div><div class="card__body form"><div class="form-row"><label class="field"><span>Package ID</span><input class="input" name="bundle_id" required></label><label class="field"><span>Version</span><input class="input" name="version" placeholder="0.1.0" required></label></div><div class="form-row"><label class="field"><span>Repository</span><input class="input" name="repository" placeholder="owner/repository" required></label><label class="field"><span>Release tag</span><input class="input" name="release_tag" placeholder="v0.1.0" required></label></div><label class="field"><span>MPKG asset名</span><input class="input" name="asset" placeholder="TestApp.mpkg" required></label><div class="form-row"><label class="field"><span>Developer Certificate</span><select class="select" name="certificate_id" required><option value="">選択してください</option>${certificates.filter((item) => item.status === "issued" || item.status === "valid").map((item) => `<option value="${escapeHtml(item.certificate_id || item.id)}">serial ${escapeHtml(item.serial_number)} · ${escapeHtml(item.certificate_id || item.id)}</option>`).join("")}</select></label><label class="field"><span>最低mochiOS</span><input class="input" name="minimum_mochios_version" value="0.1.0" required></label></div><label class="field"><span>変更内容（任意）</span><textarea class="textarea" name="changelog" maxlength="4000"></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">Releaseを登録</button></div></form>
       </section>` : ""}`);
+    initializePublishingForms();
   } catch (error) {
     if (requestId !== detailRequestId) return;
     app.innerHTML = shell(`${heading("DEVELOPER", "読み込めませんでした", error.message)}<div class="card empty">${icon("error")}<h3>Developer情報を取得できません</h3><p><a class="button button--secondary" href="#developers">一覧へ戻る</a></p></div>`);
@@ -344,12 +424,11 @@ async function renderReviewDetail(releaseId) {
       </section>
       <section class="card"><div class="card__header"><div><h2>Release情報</h2><p>登録時に固定されたGitHub assetとパッケージmetadataです。</p></div></div>
         <div class="card__body"><dl class="detail-list">
-          <div><dt>Package ID</dt><dd><code>${escapeHtml(release.bundle_id)}</code></dd></div>
+          <div><dt>Bundle ID</dt><dd><code>${escapeHtml(release.bundle_id)}</code></dd></div>
           <div><dt>Version</dt><dd>${escapeHtml(release.version)}</dd></div>
           <div><dt>Repository</dt><dd>${escapeHtml(release.github_repository)}</dd></div>
           <div><dt>Release tag</dt><dd><code>${escapeHtml(release.github_release_tag)}</code></dd></div>
           <div><dt>Asset</dt><dd>${escapeHtml(release.asset_name)} · ${formatBytes(release.file_size)}</dd></div>
-          <div><dt>最低mochiOS</dt><dd>${escapeHtml(release.minimum_mochios_version)}</dd></div>
           <div><dt>Developer</dt><dd>${escapeHtml(release.developer_display_name || "—")}<br><code>${escapeHtml(release.registered_by)}</code></dd></div>
           <div><dt>Certificate serial</dt><dd><code>${escapeHtml(release.developer_certificate_serial)}</code></dd></div>
           <div><dt>Subject Key ID</dt><dd><code class="hash-value">${escapeHtml(release.developer_certificate_subject_key_id)}</code></dd></div>
@@ -543,7 +622,8 @@ document.addEventListener("submit", async (event) => {
       const values = formValues(form);
       const developerId = form.dataset.developerId;
       await api(`/v1/app-store/developers/${encodeURIComponent(developerId)}/bundle-ids`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
-      showToast("Package IDを予約しました");
+      showToast("Bundle IDを予約しました");
+      await renderDeveloperDetail(developerId);
     });
   }
   if (form.id === "app-store-create-form") {

@@ -11,7 +11,7 @@
 
 CLI sessionの一覧・個別失効は[mochiOS ID](https://accounts.mochios.org/#sessions)へ移動して管理します。DeveloperとCertificateの事前審査はなく、管理者は問題発生時にDeveloper、Certificate、パッケージを停止または失効します。
 
-署名済みMPKGはDeveloper詳細のApp Store欄から登録します。Package IDを予約し、表示情報を作成した後、公開GitHub repository、固定tag、`.mpkg` asset名、使用したCertificateを指定します。MPKGをブラウザへアップロードする操作はありません。
+署名済みMPKGはDeveloper詳細のApp Store欄から登録します。Bundle IDを予約し、予約済みIDからアプリ情報を作成した後、公開GitHub repository、固定tag、`.mpkg` asset名、使用した有効なCertificateを選択します。価格表示と最低mochiOSバージョンは現在の登録項目に含めません。MPKGをブラウザへアップロードする操作はありません。
 
 ```powershell
 node --check public/assets/app.js

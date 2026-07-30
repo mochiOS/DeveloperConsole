@@ -97,6 +97,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .section { margin-top: 30px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
 .section-title h2 { margin: 0; font-size: 18px; }
+.publishing-flow { display: grid; gap: 16px; margin-top: 16px; }
+.publishing-step .card__header { justify-content: flex-start; }
+.step-number { display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 750; }
 .empty { padding: 46px 25px; text-align: center; }
 .empty .material-symbols-outlined { font-size: 34px; color: var(--tertiary); }
 .empty h3 { margin: 14px 0 7px; font-size: 16px; }

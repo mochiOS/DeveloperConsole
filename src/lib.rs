@@ -798,6 +798,19 @@ mod tests {
     }
 
     #[test]
+    fn publishing_flow_uses_reserved_bundle_ids_and_active_certificates() {
+        let app = include_str!("../public/assets/app.js");
+        assert!(app.contains("bundleResult.bundle_ids"));
+        assert!(app.contains("reservedBundleIds.map"));
+        assert!(app.contains("developerApps.map"));
+        assert!(app.contains("item.status === \"active\""));
+        assert!(app.contains("scopeAllowsBundleId"));
+        assert!(!app.contains("item.status === \"issued\" || item.status === \"valid\""));
+        assert!(!app.contains("name=\"price_label\""));
+        assert!(!app.contains("name=\"minimum_mochios_version\""));
+    }
+
+    #[test]
     fn developer_ca_upstream_uses_only_signed_bearer_tokens() {
         let source = include_str!("upstream.rs");
         let developer_ca = source
