@@ -424,7 +424,7 @@ async function renderAppDetail(developerId, bundleId) {
 }
 
 function reviewSkeleton(title = "審査を読み込み中") {
-  app.innerHTML = shell(`${heading("APP STORE", title, "検証済みReleaseの審査情報を取得しています。")}
+  app.innerHTML = shell(`${heading("APP STORE", title, "提出されたReleaseの検証・審査状況を取得しています。")}
     <div class="card empty"><span class="spinner"></span></div>`);
 }
 
@@ -438,16 +438,18 @@ async function renderReviews() {
       api("/v1/app-store/packages?status=blocked"),
     ]);
     const releases = result.releases || [];
+    const validationPending = releases.filter((release) => release.validation_status === "pending").length;
+    const reviewReady = releases.filter((release) => release.validation_status === "valid" && release.review_status === "submitted").length;
     const packages = [...(blockedPackagesResult.packages || []), ...(activePackagesResult.packages || [])];
     document.title = "App審査 | mochiOS ID Developer";
-    app.innerHTML = shell(`${heading("APP STORE", "App審査", "Rust審査ツールによる形式・hash・署名検証を通過したReleaseだけを表示します。")}
+    app.innerHTML = shell(`${heading("APP STORE", "App審査", "提出されたReleaseを機械検証から公開判断まで追跡します。")}
       <section class="metrics" aria-label="App審査概要">
-        <article class="metric"><span>審査待ち</span><strong>${releases.length}</strong></article>
-        <article class="metric"><span>表示条件</span><strong class="metric__text">検証済み</strong></article>
-        <article class="metric"><span>配布元</span><strong class="metric__text">GitHub Releases</strong></article>
+        <article class="metric"><span>処理中</span><strong>${releases.length}</strong></article>
+        <article class="metric"><span>機械検証待ち</span><strong>${validationPending}</strong></article>
+        <article class="metric"><span>審査可能</span><strong>${reviewReady}</strong></article>
       </section>
-      <section class="card"><div class="card__header"><div><h2>提出済みRelease</h2><p>アプリ情報と検証値を確認して承認または却下します。</p></div></div>
-        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${formatDate(release.submitted_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>審査待ちのReleaseはありません</h3><p>MPKG reviewerで検証を通過したReleaseがここに表示されます。</p></div>`}
+      <section class="card"><div class="card__header"><div><h2>提出済みRelease</h2><p>機械検証待ちを含む、公開判断が完了していないReleaseです。</p></div></div>
+        ${releases.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>アプリ</th><th>バージョン</th><th>検証</th><th>審査</th><th>登録／提出日</th><th></th></tr></thead><tbody>${releases.map((release) => `<tr><td><strong>${escapeHtml(release.display_name || release.bundle_id)}</strong><br><code>${escapeHtml(release.bundle_id)}</code></td><td>${escapeHtml(release.version)}</td><td>${statusBadge(release.validation_status)}</td><td>${statusBadge(release.review_status)}</td><td>${formatDate(release.submitted_at || release.created_at)}</td><td><a class="button button--secondary" href="#reviews/${encodeURIComponent(release.release_id)}">状態を確認</a></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("fact_check")}<h3>処理中のReleaseはありません</h3><p>App Storeへ提出されたReleaseがここに表示されます。</p></div>`}
       </section>
       ${reviewQueueSection("パッケージの公開制御", "問題のあるパッケージは全Releaseを即時停止し、調査後に再開できます。", packages, packageManagementCard)}`);
   } catch (error) {
@@ -474,6 +476,16 @@ async function renderReviewDetail(releaseId) {
     const release = result.release;
     const downloadUrl = githubDownloadUrl(release.download_url);
     const actionable = release.validation_status === "valid" && release.review_status === "submitted" && release.publish_status === "draft";
+    const unavailableTitle = release.validation_status === "pending"
+      ? "MPKGの機械検証待ちです"
+      : release.validation_status === "invalid"
+        ? "MPKGの機械検証に失敗しました"
+        : "このReleaseは操作できません";
+    const unavailableMessage = release.validation_status === "pending"
+      ? "運営側でMPKG Reviewerを実行すると、検証結果がここに反映されます。"
+      : release.validation_status === "invalid"
+        ? `${release.validation_error_code || "検証エラー"}${release.validation_message ? ` · ${release.validation_message}` : ""}`
+        : "検証済み・審査待ち・下書きのReleaseだけを承認または却下できます。";
     document.title = `${release.bundle_id} ${release.version} | App審査`;
     app.innerHTML = shell(`${heading("APP STORE REVIEW", release.display_name || release.bundle_id, `${release.bundle_id} · ${release.version}`, `<a class="button button--secondary" href="#reviews">審査一覧へ戻る</a>`)}
       <section class="review-summary">
@@ -502,7 +514,7 @@ async function renderReviewDetail(releaseId) {
       ${actionable ? `<section class="section grid review-actions">
         <form class="card" id="review-approve-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>承認して公開</h3><p>承認するとストアへ即時公開されます。</p></div></div><div class="card__body form"><label class="confirm-field"><input type="checkbox" name="confirmed" required><span>検証値とアプリ内容を確認しました</span></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--primary" type="submit">承認して公開</button></div></form>
         <form class="card" id="review-reject-form" data-release-id="${escapeHtml(release.release_id)}"><div class="card__header"><div><h3>却下</h3><p>固定理由を選び、必要なら補足します。</p></div></div><div class="card__body form"><label class="field"><span>却下理由</span><select class="input" name="reason_code" required><option value="">選択してください</option><option value="metadata_incorrect">Metadataが不正確</option><option value="misleading_description">説明が誤解を招く</option><option value="malicious_behavior">悪意ある動作</option><option value="policy_violation">ポリシー違反</option><option value="duplicate_application">重複アプリ</option><option value="broken_application">動作不能</option><option value="other">その他</option></select></label><label class="field"><span>補足（任意）</span><textarea class="textarea" name="note" maxlength="2000"></textarea></label><span class="field-error" data-error hidden></span></div><div class="card__footer"><button class="button button--danger" type="submit">Releaseを却下</button></div></form>
-      </section>` : `<section class="section card empty">${icon("fact_check")}<h3>このReleaseは操作できません</h3><p>検証済み・審査待ち・下書きのReleaseだけを承認または却下できます。</p></section>`}`);
+      </section>` : `<section class="section card empty">${icon("fact_check")}<h3>${escapeHtml(unavailableTitle)}</h3><p>${escapeHtml(unavailableMessage)}</p></section>`}`);
   } catch (error) {
     app.innerHTML = shell(`${heading("APP STORE", "Releaseを取得できません", error.message)}<div class="card empty">${icon("error")}<h3>読み込みに失敗しました</h3><p><a class="button button--secondary" href="#reviews">審査一覧へ戻る</a></p></div>`);
   }

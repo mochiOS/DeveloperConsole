@@ -291,7 +291,7 @@ async fn review_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         &ctx.env,
         &account.id,
         Method::Get,
-        "/v1/admin/releases?status=submitted",
+        "/v1/admin/releases?status=queue",
         None,
     )
     .await
@@ -821,6 +821,16 @@ mod tests {
         assert!(!app.contains("GitHub Releaseを登録"));
         assert!(!app.contains("審査が完了するまでお待ちください。"));
         assert!(!app.contains("Reviewer検証を実行してください"));
+    }
+
+    #[test]
+    fn review_queue_shows_validation_pending_releases() {
+        let source = include_str!("lib.rs");
+        let app = include_str!("../public/assets/app.js");
+        assert!(source.contains("/v1/admin/releases?status=queue"));
+        assert!(app.contains("機械検証待ち"));
+        assert!(app.contains("release.submitted_at || release.created_at"));
+        assert!(!app.contains("検証を通過したReleaseだけを表示します"));
     }
 
     #[test]
