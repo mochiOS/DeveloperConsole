@@ -228,6 +228,19 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; word
 .admin-visibility__row div { min-width: 0; }
 .admin-visibility__row span { display: block; margin-bottom: 6px; color: var(--secondary); font-size: 10px; font-weight: 700; letter-spacing: .03em; }
 .admin-visibility__row p { margin: 0; color: var(--text); font-size: 12px; line-height: 1.65; }
+.admin-guide-section { margin-top: 56px; }
+.admin-guides { grid-template-columns: minmax(0,1fr); }
+.admin-guide { overflow: hidden; }
+.admin-guide .card__header { align-items: flex-start; }
+.admin-guide__steps { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.admin-guide__step { display: grid; grid-template-columns: 32px minmax(0,1fr); gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.admin-guide__step:first-child { padding-top: 0; }
+.admin-guide__step:last-child { padding-bottom: 0; border-bottom: 0; }
+.admin-guide__number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 750; }
+.admin-guide__step h3 { margin: 3px 0 7px; font-size: 14px; }
+.admin-guide__step p { margin: 0; color: var(--secondary); font-size: 12px; line-height: 1.7; }
+.admin-guide__command { display: block; margin-top: 12px; padding: 11px 12px; overflow-x: auto; border-radius: 8px; background: var(--surface-muted); color: var(--text); white-space: nowrap; }
+.admin-guide__step .admin-guide__note { margin-top: 10px; color: var(--tertiary); font-size: 11px; }
 .decision-actions { display: grid; grid-template-columns: auto minmax(340px, 1fr); gap: 18px; align-items: end; padding: 17px 24px; border-top: 1px solid var(--border); background: #fafbfc; }
 .reject-row { display: grid; grid-template-columns: minmax(180px,1fr) auto; gap: 10px; align-items: end; }
 .decision-actions .field-error { grid-column: 1 / -1; }

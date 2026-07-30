@@ -444,6 +444,38 @@ function adminVisibilityRow(title, visible, hidden, action) {
   return `<div class="admin-visibility__row"><strong>${escapeHtml(title)}</strong><div><span>表示されるもの</span><p>${escapeHtml(visible)}</p></div><div><span>表示されないもの</span><p>${escapeHtml(hidden)}</p></div><div><span>操作できる条件</span><p>${escapeHtml(action)}</p></div></div>`;
 }
 
+function adminGuideStep(number, title, description, detail = "") {
+  return `<li class="admin-guide__step"><span class="admin-guide__number">${escapeHtml(number)}</span><div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p>${detail}</div></li>`;
+}
+
+function appStoreReviewGuide() {
+  const command = reviewerCommand("<Release ID>");
+  return `<article class="card admin-guide">
+    <div class="card__header"><span class="admin-service__icon">${icon("fact_check")}</span><div><p class="admin-service__role">APP STORE</p><h2>Release審査の手順</h2><p>機械検証と内容審査は別の作業です。必ずこの順番で進めます。</p></div></div>
+    <div class="card__body"><ol class="admin-guide__steps">
+      ${adminGuideStep("1", "提出を確認", "「App Store」タブで機械検証待ちのReleaseを開き、Release ID、Bundle ID、Version、GitHub repository、固定tag、asset名が提出内容と一致することを確認します。")}
+      ${adminGuideStep("2", "MPKG Reviewerを実行", "AppStoreディレクトリをPowerShellで開き、詳細画面からコピーしたコマンドを実行します。Reviewer用tokenは実行環境へ設定し、ブラウザへ入力しません。", `<code class="admin-guide__command">${escapeHtml(command)}</code><p class="admin-guide__note">ReviewerはGitHubからMPKGを一時取得し、署名、Certificate、Bundle ID、Capability、payload、SHA-256、path制約を検証します。アプリは実行せず、MPKG本体も保存しません。</p>`)}
+      ${adminGuideStep("3", "検証結果を確認", "状態が「審査可能」になったReleaseを開きます。「検証失敗」の場合はエラー内容を開発者へ返し、修正した新しいReleaseを提出してもらいます。失敗したReleaseは承認できません。")}
+      ${adminGuideStep("4", "内容を審査", "Release情報、変更内容、DeveloperとCertificate、ハッシュ、Capability、インストール先を確認します。動作確認が必要な場合は、GitHub assetを隔離した検証環境で確認します。管理端末ではMPKGを直接実行しません。")}
+      ${adminGuideStep("5", "承認または却下", "問題がなければ「承認して公開」を押します。承認するとStoreへ即時公開されます。問題があれば理由を選んで却下します。操作後は「操作履歴」で対象ID、操作者、IP、日時を確認します。")}
+    </ol></div>
+    <div class="card__footer"><a class="button button--secondary" href="#reviews">Release管理を開く${icon("chevron_right")}</a></div>
+  </article>`;
+}
+
+function developerCaManagementGuide() {
+  return `<article class="card admin-guide">
+    <div class="card__header"><span class="admin-service__icon">${icon("security")}</span><div><p class="admin-service__role">DEVELOPER CA</p><h2>Developer CA管理の手順</h2><p>通常のDeveloperとCertificateに事前審査はありません。管理者は追加作成申請と問題発生時の対応を行います。</p></div></div>
+    <div class="card__body"><ol class="admin-guide__steps">
+      ${adminGuideStep("1", "追加作成申請を判断", "標準上限を超えるDeveloper作成申請だけ、申請Account、希望名、種別、理由を確認して承認または却下します。通常のDeveloperは作成時に自動で利用可能になります。")}
+      ${adminGuideStep("2", "問題を調査", "Developer ID、Certificate ID、Bundle ID、Capabilityで検索し、監査ログや報告内容と対象が一致することを確認します。対象を取り違えないよう、操作前にIDを照合します。")}
+      ${adminGuideStep("3", "停止・再開・失効を選択", "調査中はDeveloperまたはCertificateを一時停止し、安全を確認できた場合だけ再開します。鍵侵害などが確定したCertificateは失効します。失効は取り消せません。")}
+      ${adminGuideStep("4", "操作履歴を確認", "処理後に「操作履歴」を開き、操作、対象ID、操作者、接続元IP、Cloudflare Ray ID、日時が記録されていることを確認します。")}
+    </ol></div>
+    <div class="card__footer"><a class="button button--secondary" href="#developer-reviews">Developer CA管理を開く${icon("chevron_right")}</a></div>
+  </article>`;
+}
+
 function reviewerCommand(releaseId) {
   return `cargo run --release --manifest-path reviewer/Cargo.toml -- ${releaseId}`;
 }
@@ -616,6 +648,9 @@ async function renderAdmin() {
     </section>
     <section class="section"><div class="section-title"><div><h2>管理画面の表示ルール</h2><p>一覧に出る項目と、一覧から除外される項目を状態別に示します。</p></div></div>
       <div class="card admin-visibility">${visibilityRows}</div>
+    </section>
+    <section class="section admin-guide-section"><div class="section-title"><div><h2>管理の進め方</h2><p>初めて担当する場合も、上から順に進めれば処理できます。</p></div></div>
+      <div class="grid admin-guides">${appStoreReviewer ? appStoreReviewGuide() : ""}${developerCaReviewer ? developerCaManagementGuide() : ""}</div>
     </section>`);
 }
 

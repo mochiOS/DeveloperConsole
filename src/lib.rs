@@ -929,6 +929,13 @@ mod tests {
         assert!(app.contains("次に行うこと"));
         assert!(app.contains("表示されるもの"));
         assert!(app.contains("表示されないもの"));
+        assert!(app.contains("管理の進め方"));
+        assert!(app.contains("Release審査の手順"));
+        assert!(app.contains("機械検証と内容審査は別の作業です"));
+        assert!(app.contains("Reviewer用tokenは実行環境へ設定"));
+        assert!(app.contains("承認するとStoreへ即時公開されます"));
+        assert!(app.contains("通常のDeveloperとCertificateに事前審査はありません"));
+        assert!(app.contains("失効は取り消せません"));
         assert!(app.contains("copy-reviewer-command"));
         assert!(app.contains("reviewerCommand(release.release_id)"));
         assert!(app.contains("appStoreReviewer || developerCaReviewer"));
